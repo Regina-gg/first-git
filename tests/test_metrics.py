@@ -86,4 +86,5 @@ class MetricsTest(unittest.TestCase):
     def test_default_market_chain_avoids_tushare_adjust_rate_limit_first(self):
         with open(".github/workflows/daily_reports.yml", encoding="utf-8") as file:
             workflow = file.read()
-        self.assertIn("MARKET_DATA_CHAIN: eastmoney,akshare,tushare", workflow)
+        self.assertIn("MARKET_DATA_CHAIN: eastmoney,akshare", workflow)
+        self.assertNotIn("MARKET_DATA_CHAIN: tushare", workflow)
