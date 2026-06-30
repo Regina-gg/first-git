@@ -82,3 +82,8 @@ class MetricsTest(unittest.TestCase):
     def test_default_price_adjustment_is_forward_adjusted(self):
         self.assertEqual(_price_adjust(), "qfq")
         self.assertEqual(_eastmoney_fqt(), "1")
+
+    def test_default_market_chain_avoids_tushare_adjust_rate_limit_first(self):
+        with open(".github/workflows/daily_reports.yml", encoding="utf-8") as file:
+            workflow = file.read()
+        self.assertIn("MARKET_DATA_CHAIN: eastmoney,akshare,tushare", workflow)
