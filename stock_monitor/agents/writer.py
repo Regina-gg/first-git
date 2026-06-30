@@ -9,6 +9,7 @@ from ..models import DecisionResult, ReportMessage
 
 
 TOKEN_RE = re.compile(r"{{\s*([a-zA-Z0-9_.]+)\s*}}")
+IDEMPOTENCY_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 class TemplateValidationError(ValueError):
@@ -34,7 +35,7 @@ class WriterAgent:
         self._validate_required(config.get("required_fields", []), context)
         template = ensure_project_path(config["template"]).read_text(encoding="utf-8")
         markdown = TOKEN_RE.sub(lambda match: str(context.get(match.group(1), f"{{{{ {match.group(1)} }}}}")), template)
-        idempotency_key = f"stock-monitor:{report_key}:{decision.report_date.isoformat()}:{target_chat_id or 'dry-run'}"
+        idempotency_key = self._idempotency_key(report_key, decision.report_date.isoformat(), target_chat_id or "dry-run")
         return ReportMessage(decision.report_type, title, markdown, target_chat_id, idempotency_key)
 
     def _title(self, decision: DecisionResult) -> str:
@@ -51,3 +52,7 @@ class WriterAgent:
         missing = [field for field in required_fields if field not in context or context[field] in (None, "")]
         if missing:
             raise TemplateValidationError(f"Template context is missing required fields: {', '.join(missing)}")
+
+    def _idempotency_key(self, report_key: str, report_date: str, target: str) -> str:
+        raw = f"stock-monitor-{report_key}-{report_date}-{target}"
+        return IDEMPOTENCY_RE.sub("-", raw)[:64]

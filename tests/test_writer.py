@@ -41,6 +41,11 @@ class WriterTest(unittest.TestCase):
             self.assertNotIn("{{", message.markdown)
             self.assertIn("数据质量", message.markdown)
 
+    def test_idempotency_key_uses_feishu_safe_characters(self):
+        message = WriterAgent().render(decision_with_sections(ReportType.CLOSE_REPORT), "oc_xxx:bad/value")
+        self.assertRegex(message.idempotency_key, r"^[a-zA-Z0-9_-]+$")
+        self.assertLessEqual(len(message.idempotency_key), 64)
+
     def test_template_missing_field_fails_clearly(self):
         writer = WriterAgent()
         decision = decision_with_sections(ReportType.PRE_MARKET)
