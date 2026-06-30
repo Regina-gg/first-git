@@ -24,6 +24,8 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 ```bash
 export DATA_PROVIDER=multi
 export MARKET_DATA_CHAIN=tushare,eastmoney,akshare
+export ENRICHMENT_PROVIDER=multi
+export ENRICHMENT_CHAIN=tushare,akshare
 export TUSHARE_TOKEN=your_tushare_token_optional
 python3 -m stock_monitor.run_report --type close_report --dry-run
 ```
@@ -36,6 +38,18 @@ Supported V1 sources:
 - `sample`: deterministic local sample data for tests and offline demos.
 
 For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. If it is missing or quota-limited, the workflow automatically falls back to Eastmoney and then AkShare.
+
+## Enrichment Data
+
+After base OHLCV data is loaded, the Research Agent runs an enrichment layer that fills the PRD's richer fields when the source is available:
+
+- 主力资金：Tushare `moneyflow`, with AkShare individual fund flow fallback.
+- 融资融券：Tushare `margin_detail`, with best-effort AkShare latest margin fallback.
+- 筹码：Tushare `cyq_perf` when the account has access.
+- 板块基准：Tushare `index_daily` based on `config/sector_benchmarks.yaml`.
+- 北向资金：field is reserved; only fill it after a stable per-stock northbound holdings adapter is added.
+
+Each enrichment failure is recorded in the report data-quality section and does not block delivery.
 
 ## Feishu Delivery
 
