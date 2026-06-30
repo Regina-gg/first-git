@@ -15,7 +15,27 @@ python3 -m stock_monitor.calibrate_thresholds --date 2026-06-30
 python3 -m stock_monitor.run_report --type close_report --date 2026-06-30 --dry-run
 ```
 
-V1 uses `SampleDataProvider` by default so the end-to-end workflow runs without an external market data source.
+V1 can run with sample data locally, but production pushes should use `DATA_PROVIDER=multi`.
+
+## Market Data Sources
+
+`DATA_PROVIDER=multi` tries configured sources in order and records the winning source or failure reason in the report's data-quality section:
+
+```bash
+export DATA_PROVIDER=multi
+export MARKET_DATA_CHAIN=tushare,eastmoney,akshare
+export TUSHARE_TOKEN=your_tushare_token_optional
+python3 -m stock_monitor.run_report --type close_report --dry-run
+```
+
+Supported V1 sources:
+
+- `tushare`: requires `TUSHARE_TOKEN`; uses Tushare Pro daily/daily_basic for OHLCV, amount, pct change, and turnover.
+- `eastmoney`: no token; calls Eastmoney historical K-line directly.
+- `akshare`: no token; uses AkShare's Eastmoney wrapper and stock news helper.
+- `sample`: deterministic local sample data for tests and offline demos.
+
+For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. If it is missing or quota-limited, the workflow automatically falls back to Eastmoney and then AkShare.
 
 ## Feishu Delivery
 
@@ -46,6 +66,7 @@ Add these repository secrets in `Settings -> Secrets and variables -> Actions`:
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `FEISHU_CHAT_ID`
+- `TUSHARE_TOKEN` (optional, recommended for more stable market data)
 
 The app secret is passed to `lark-cli config init --app-secret-stdin` through stdin at runtime and is not stored in the repository.
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 from datetime import date, timedelta
-from typing import Any, Dict, List, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from .models import NewsItem, PriceBar, StockConfig
 
@@ -125,8 +126,141 @@ class AkShareDataProvider:
         return [NewsItem("AkShare 新闻接口暂未返回内容", "公司", "中性", "弱", "今晚报告仅使用真实行情数据，新闻/公告需后续接入更稳定来源。")]
 
 
+class TushareDataProvider:
+    """Tushare Pro daily data provider.
+
+    Requires TUSHARE_TOKEN. Daily bars come from pro.daily; turnover is enriched
+    from pro.daily_basic when available.
+    """
+
+    def __init__(self, token: Optional[str] = None) -> None:
+        token = token or os.getenv("TUSHARE_TOKEN")
+        if not token:
+            raise RuntimeError("DATA_PROVIDER=tushare requires TUSHARE_TOKEN.")
+        try:
+            import tushare as ts  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("DATA_PROVIDER=tushare requires installing tushare.") from exc
+        self.pro = ts.pro_api(token)
+        self.quality_notes = [
+            "行情数据优先来自 Tushare Pro daily/daily_basic，包含日线 OHLC、成交量、成交额和换手率。",
+            "V1 Tushare 适配器暂未接入逐股主力资金、北向、融资和筹码；相关字段按中性值处理。",
+        ]
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
+        end = end_date.strftime("%Y%m%d")
+        frame = self.pro.daily(ts_code=stock.symbol, start_date=start_date, end_date=end)
+        if frame is None or len(frame) == 0:
+            raise RuntimeError(f"Tushare returned no daily bars for {stock.symbol}.")
+        try:
+            basics = self.pro.daily_basic(ts_code=stock.symbol, start_date=start_date, end_date=end, fields="ts_code,trade_date,turnover_rate")
+            if basics is not None and len(basics) > 0:
+                frame = frame.merge(basics[["trade_date", "turnover_rate"]], on="trade_date", how="left")
+        except Exception:
+            frame["turnover_rate"] = 0.0
+        rows = frame.sort_values("trade_date").tail(lookback_days).to_dict("records")
+        bars = [_bar_from_tushare_row(row) for row in rows]
+        if len(bars) < min(60, lookback_days):
+            raise RuntimeError(f"Tushare returned only {len(bars)} bars for {stock.symbol}; at least 60 are required.")
+        return bars
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        return [NewsItem("Tushare 新闻源未启用", "公司", "中性", "弱", "当前 Tushare 适配器仅用于日线行情；公告/新闻需后续接入专用源。")]
+
+
+class EastmoneyDirectDataProvider:
+    """Direct Eastmoney historical kline provider without AkShare wrapper."""
+
+    def __init__(self) -> None:
+        try:
+            import requests  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("DATA_PROVIDER=eastmoney requires installing requests.") from exc
+        self.requests = requests
+        self.quality_notes = [
+            "行情数据来自东方财富历史 K 线接口直连，包含日线 OHLCV、成交额、涨跌幅、振幅和换手率。",
+            "V1 东方财富直连适配器暂未接入逐股主力资金、北向、融资和筹码；相关字段按中性值处理。",
+        ]
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
+        end = end_date.strftime("%Y%m%d")
+        response = self.requests.get(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            params={
+                "secid": _eastmoney_secid(stock.symbol),
+                "fields1": "f1,f2,f3,f4,f5,f6",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                "klt": "101",
+                "fqt": "0",
+                "beg": start_date,
+                "end": end,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        klines = payload.get("data", {}).get("klines", []) if isinstance(payload, dict) else []
+        if not klines:
+            raise RuntimeError(f"Eastmoney returned no daily bars for {stock.symbol}.")
+        bars = [_bar_from_eastmoney_kline(item) for item in klines[-lookback_days:]]
+        if len(bars) < min(60, lookback_days):
+            raise RuntimeError(f"Eastmoney returned only {len(bars)} bars for {stock.symbol}; at least 60 are required.")
+        return bars
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        return [NewsItem("东方财富新闻源未接入", "公司", "中性", "弱", "当前东方财富直连适配器仅用于日线行情。")]
+
+
+class MultiSourceDataProvider:
+    """Fallback chain across configured market data providers."""
+
+    def __init__(self, chain: Optional[str] = None) -> None:
+        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "tushare,eastmoney,akshare")).split(",") if item.strip()]
+        self.providers = []
+        self.quality_notes = ["多数据源模式已启用，按配置顺序尝试：" + " -> ".join(names)]
+        for name in names:
+            try:
+                provider = _single_provider_from_name(name)
+                self.providers.append((name, provider))
+                self.quality_notes.extend(getattr(provider, "quality_notes", []))
+            except Exception as exc:
+                self.quality_notes.append(f"{name} 数据源未启用：{exc}")
+        if not self.providers:
+            raise RuntimeError("No market data providers are available in DATA_PROVIDER=multi.")
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        errors = []
+        for name, provider in self.providers:
+            try:
+                bars = provider.get_history(stock, end_date, lookback_days)
+                self.quality_notes.append(f"{stock.name}（{stock.symbol}）行情使用 {name} 数据源。")
+                return bars
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        raise RuntimeError("; ".join(errors))
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        for _name, provider in self.providers:
+            try:
+                items = provider.get_news(stocks, report_date)
+            except Exception:
+                continue
+            if items:
+                return items
+        return [NewsItem("新闻源暂未返回内容", "公司", "中性", "弱", "所有已配置新闻源均未返回有效内容。")]
+
+
 def _strip_exchange(symbol: str) -> str:
     return symbol.split(".")[0]
+
+
+def _eastmoney_secid(symbol: str) -> str:
+    code = _strip_exchange(symbol)
+    if symbol.endswith(".SH") or code.startswith("6"):
+        return f"1.{code}"
+    return f"0.{code}"
 
 
 def _value(row: Dict[str, Any], names: List[str], default: Any = 0.0) -> Any:
@@ -149,6 +283,13 @@ def _date(row: Dict[str, Any]) -> date:
     if hasattr(value, "date"):
         return value.date()
     return date.fromisoformat(str(value)[:10])
+
+
+def _trade_date(value: Any) -> date:
+    text = str(value)
+    if len(text) == 8 and text.isdigit():
+        return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+    return date.fromisoformat(text[:10])
 
 
 def _bar_from_akshare_row(row: Dict[str, Any]) -> PriceBar:
@@ -177,9 +318,68 @@ def _bar_from_akshare_row(row: Dict[str, Any]) -> PriceBar:
     )
 
 
-def provider_from_name(name: str):
+def _bar_from_tushare_row(row: Dict[str, Any]) -> PriceBar:
+    close = _float(row, ["close"])
+    pct_change = _float(row, ["pct_chg"], 0.0) / 100
+    return PriceBar(
+        date=_trade_date(_value(row, ["trade_date"])),
+        open=_float(row, ["open"], close),
+        high=_float(row, ["high"], close),
+        low=_float(row, ["low"], close),
+        close=close,
+        amount=_float(row, ["amount"], 0.0) * 1000,
+        turnover_rate=_float(row, ["turnover_rate"], 0.0) / 100,
+        main_net_inflow=0.0,
+        northbound_net_inflow=0.0,
+        large_order_ratio=0.0,
+        margin_balance=1.0,
+        profit_ratio=0.5,
+        average_cost=close,
+        chip_width_90=1.0,
+        sector_return=pct_change,
+        market_return=pct_change,
+    )
+
+
+def _bar_from_eastmoney_kline(kline: str) -> PriceBar:
+    parts = kline.split(",")
+    if len(parts) < 11:
+        raise RuntimeError(f"Invalid Eastmoney kline row: {kline}")
+    close = float(parts[2])
+    pct_change = float(parts[8]) / 100
+    return PriceBar(
+        date=date.fromisoformat(parts[0]),
+        open=float(parts[1]),
+        close=close,
+        high=float(parts[3]),
+        low=float(parts[4]),
+        amount=float(parts[6]),
+        turnover_rate=float(parts[10]) / 100,
+        main_net_inflow=0.0,
+        northbound_net_inflow=0.0,
+        large_order_ratio=0.0,
+        margin_balance=1.0,
+        profit_ratio=0.5,
+        average_cost=close,
+        chip_width_90=1.0,
+        sector_return=pct_change,
+        market_return=pct_change,
+    )
+
+
+def _single_provider_from_name(name: str):
     if name == "sample":
         return SampleDataProvider()
     if name == "akshare":
         return AkShareDataProvider()
+    if name == "tushare":
+        return TushareDataProvider()
+    if name == "eastmoney":
+        return EastmoneyDirectDataProvider()
     raise ValueError(f"Unsupported provider in V1: {name}")
+
+
+def provider_from_name(name: str):
+    if name == "multi":
+        return MultiSourceDataProvider()
+    return _single_provider_from_name(name)

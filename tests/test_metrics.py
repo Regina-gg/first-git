@@ -3,6 +3,8 @@ import unittest
 
 from stock_monitor.data_providers import SampleDataProvider
 from stock_monitor.data_providers import _bar_from_akshare_row
+from stock_monitor.data_providers import _bar_from_eastmoney_kline
+from stock_monitor.data_providers import _bar_from_tushare_row
 from stock_monitor.metrics import compute_metrics, percentile_rank
 from stock_monitor.models import StockConfig
 from stock_monitor.thresholds import calibrate_stock
@@ -43,6 +45,33 @@ class MetricsTest(unittest.TestCase):
                 "涨跌幅": 1.2,
             }
         )
+        self.assertEqual(bar.close, 10.5)
+        self.assertEqual(bar.amount, 123456)
+        self.assertAlmostEqual(bar.turnover_rate, 0.025)
+        self.assertAlmostEqual(bar.market_return, 0.012)
+
+    def test_tushare_row_mapping(self):
+        bar = _bar_from_tushare_row(
+            {
+                "trade_date": "20260630",
+                "open": 10,
+                "high": 11,
+                "low": 9,
+                "close": 10.5,
+                "amount": 123.456,
+                "turnover_rate": 2.5,
+                "pct_chg": 1.2,
+            }
+        )
+        self.assertEqual(bar.date.isoformat(), "2026-06-30")
+        self.assertEqual(bar.close, 10.5)
+        self.assertEqual(bar.amount, 123456)
+        self.assertAlmostEqual(bar.turnover_rate, 0.025)
+        self.assertAlmostEqual(bar.market_return, 0.012)
+
+    def test_eastmoney_kline_mapping(self):
+        bar = _bar_from_eastmoney_kline("2026-06-30,10,10.5,11,9,1000,123456,20,1.2,0.12,2.5")
+        self.assertEqual(bar.date.isoformat(), "2026-06-30")
         self.assertEqual(bar.close, 10.5)
         self.assertEqual(bar.amount, 123456)
         self.assertAlmostEqual(bar.turnover_rate, 0.025)
