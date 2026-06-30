@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date
 from typing import List
 
@@ -42,6 +43,23 @@ class ResearchAgent:
                 data_quality.extend(enrichment_notes)
                 metrics.append(compute_metrics(stock, bars, thresholds[stock.symbol]))
             except Exception as exc:
-                data_quality.append(f"{stock.name}（{stock.symbol}）行情数据暂缺：{exc}")
+                data_quality.append(_market_data_missing_note(stock, exc))
         news = self.news_provider.get_news(stocks, report_date)
-        return ResearchResult(report_type, report_date, metrics, thresholds, news, data_quality)
+        return ResearchResult(report_type, report_date, metrics, thresholds, news, _dedupe_notes(data_quality))
+
+
+def _market_data_missing_note(stock: StockConfig, exc: Exception) -> str:
+    if os.getenv("INCLUDE_PROVIDER_ERRORS", "").lower() in {"1", "true", "yes"}:
+        return f"{stock.name}（{stock.symbol}）行情数据暂缺：{exc}"
+    return f"{stock.name}（{stock.symbol}）行情数据暂缺：已配置行情源连接失败或返回空数据，本次不生成该股量价判断。"
+
+
+def _dedupe_notes(notes: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for note in notes:
+        if note in seen:
+            continue
+        seen.add(note)
+        result.append(note)
+    return result
