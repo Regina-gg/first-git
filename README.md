@@ -23,7 +23,7 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 
 ```bash
 export DATA_PROVIDER=multi
-export MARKET_DATA_CHAIN=tushare,eastmoney,akshare
+export MARKET_DATA_CHAIN=eastmoney,akshare,tushare
 export PRICE_ADJUST=qfq
 export ENRICHMENT_PROVIDER=multi
 export ENRICHMENT_CHAIN=tushare,akshare
@@ -40,7 +40,7 @@ Supported V1 sources:
 
 `PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
 
-For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. If it is missing or quota-limited, the workflow automatically falls back to Eastmoney and then AkShare.
+For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. Base OHLCV defaults to Eastmoney and AkShare first because Tushare forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks.
 
 ## Enrichment Data
 
