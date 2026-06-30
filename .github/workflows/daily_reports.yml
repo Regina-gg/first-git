@@ -73,7 +73,7 @@ jobs:
       - name: Calibrate thresholds
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: eastmoney,akshare,tushare
+          MARKET_DATA_CHAIN: eastmoney,akshare
           PRICE_ADJUST: qfq
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
@@ -82,7 +82,7 @@ jobs:
       - name: Run report
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: eastmoney,akshare,tushare
+          MARKET_DATA_CHAIN: eastmoney,akshare
           PRICE_ADJUST: qfq
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
