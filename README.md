@@ -23,7 +23,7 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 
 ```bash
 export DATA_PROVIDER=multi
-export MARKET_DATA_CHAIN=eastmoney,akshare
+export MARKET_DATA_CHAIN=eastmoney,sina,akshare
 export DATA_PROVIDER_TIMEOUT_SECONDS=20
 export PRICE_ADJUST=qfq
 export ENRICHMENT_PROVIDER=multi
@@ -41,7 +41,7 @@ Supported V1 sources:
 
 `PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
 
-For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. Base OHLCV defaults to Eastmoney and AkShare because Tushare forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks.
+For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. Base OHLCV defaults to Eastmoney, Sina, and AkShare because Tushare forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks.
 
 `DATA_PROVIDER_TIMEOUT_SECONDS` caps each market-data source attempt so a slow public endpoint cannot block scheduled Feishu delivery.
 
