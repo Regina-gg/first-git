@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, timedelta
-from typing import Dict, List, Protocol
+from typing import Any, Dict, List, Protocol
 
 from .models import NewsItem, PriceBar, StockConfig
 
@@ -71,7 +71,115 @@ class SampleDataProvider:
         ]
 
 
-def provider_from_name(name: str) -> SampleDataProvider:
-    if name != "sample":
-        raise ValueError(f"Unsupported provider in V1: {name}")
-    return SampleDataProvider()
+class AkShareDataProvider:
+    """AkShare-backed A-share daily data provider.
+
+    V1 uses AkShare for real OHLCV, amount, amplitude, and turnover data.
+    Funding, chip, margin, sector, and benchmark fields remain neutral unless
+    a richer provider is added.
+    """
+
+    def __init__(self) -> None:
+        try:
+            import akshare as ak  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("DATA_PROVIDER=akshare requires installing akshare.") from exc
+        self.ak = ak
+        self.quality_notes = [
+            "行情数据来自 AkShare/Eastmoney 接口，包含日线 OHLCV、成交额、涨跌幅、振幅、换手率。",
+            "V1 AkShare 适配器暂未接入逐股主力资金、北向、融资、筹码和板块基准；相关字段按中性值处理。",
+        ]
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        symbol = _strip_exchange(stock.symbol)
+        start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
+        end = end_date.strftime("%Y%m%d")
+        try:
+            frame = self.ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end, adjust="")
+        except TypeError:
+            frame = self.ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end, adjust="")
+        if frame is None or len(frame) == 0:
+            raise RuntimeError(f"AkShare returned no daily bars for {stock.symbol}.")
+        rows = frame.tail(lookback_days).to_dict("records")
+        bars = [_bar_from_akshare_row(row) for row in rows]
+        if len(bars) < min(60, lookback_days):
+            raise RuntimeError(f"AkShare returned only {len(bars)} bars for {stock.symbol}; at least 60 are required.")
+        return bars
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        items: List[NewsItem] = []
+        for stock in stocks:
+            symbol = _strip_exchange(stock.symbol)
+            try:
+                frame = self.ak.stock_news_em(symbol=symbol)
+            except Exception:
+                continue
+            if frame is None or len(frame) == 0:
+                continue
+            for row in frame.head(3).to_dict("records"):
+                title = str(_value(row, ["新闻标题", "标题", "title"], f"{stock.name} 新闻"))
+                summary = str(_value(row, ["新闻内容", "内容", "summary"], "新闻摘要暂缺。"))
+                items.append(NewsItem(title=title, category="公司", sentiment="中性", impact="中", summary=summary[:160]))
+        if items:
+            return items
+        return [NewsItem("AkShare 新闻接口暂未返回内容", "公司", "中性", "弱", "今晚报告仅使用真实行情数据，新闻/公告需后续接入更稳定来源。")]
+
+
+def _strip_exchange(symbol: str) -> str:
+    return symbol.split(".")[0]
+
+
+def _value(row: Dict[str, Any], names: List[str], default: Any = 0.0) -> Any:
+    for name in names:
+        if name in row and row[name] not in (None, ""):
+            return row[name]
+    return default
+
+
+def _float(row: Dict[str, Any], names: List[str], default: float = 0.0) -> float:
+    value = _value(row, names, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _date(row: Dict[str, Any]) -> date:
+    value = _value(row, ["日期", "date"])
+    if hasattr(value, "date"):
+        return value.date()
+    return date.fromisoformat(str(value)[:10])
+
+
+def _bar_from_akshare_row(row: Dict[str, Any]) -> PriceBar:
+    close = _float(row, ["收盘", "收盘价", "close"])
+    open_price = _float(row, ["开盘", "open"], close)
+    high = _float(row, ["最高", "high"], close)
+    low = _float(row, ["最低", "low"], close)
+    pct_change = _float(row, ["涨跌幅"], 0.0) / 100
+    return PriceBar(
+        date=_date(row),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        amount=_float(row, ["成交额", "amount"], 0.0),
+        turnover_rate=_float(row, ["换手率"], 0.0) / 100,
+        main_net_inflow=0.0,
+        northbound_net_inflow=0.0,
+        large_order_ratio=0.0,
+        margin_balance=1.0,
+        profit_ratio=0.5,
+        average_cost=close,
+        chip_width_90=1.0,
+        sector_return=pct_change,
+        market_return=pct_change,
+    )
+
+
+def provider_from_name(name: str):
+    if name == "sample":
+        return SampleDataProvider()
+    if name == "akshare":
+        return AkShareDataProvider()
+    raise ValueError(f"Unsupported provider in V1: {name}")

@@ -28,6 +28,8 @@ jobs:
         run: |
           npm install -g @larksuite/cli
           lark-cli --version
+      - name: Install market data dependencies
+        run: python -m pip install -r requirements-akshare.txt
       - name: Validate Feishu secrets
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
@@ -73,7 +75,7 @@ jobs:
         run: python -m stock_monitor.calibrate_thresholds
       - name: Run report
         env:
-          DATA_PROVIDER: sample
+          DATA_PROVIDER: akshare
           FEISHU_DELIVERY_PROVIDER: lark_cli
           FEISHU_SEND_AS: bot
           FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}

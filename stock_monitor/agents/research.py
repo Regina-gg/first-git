@@ -25,7 +25,13 @@ class ResearchAgent:
     ) -> ResearchResult:
         if not thresholds or any(stock.symbol not in thresholds for stock in stocks):
             thresholds = calibrate_watchlist(stocks, self.market_provider, report_date)
-        data_quality = ["V1 当前使用示例数据源；正式部署需接入真实行情、资金、公告和新闻适配器。"]
+        data_quality = list(
+            getattr(
+                self.market_provider,
+                "quality_notes",
+                ["V1 当前使用示例数据源；正式部署需接入真实行情、资金、公告和新闻适配器。"],
+            )
+        )
         metrics = []
         for stock in stocks:
             bars = self.market_provider.get_history(stock, report_date, 260)
