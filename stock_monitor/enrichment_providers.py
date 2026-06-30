@@ -71,7 +71,7 @@ class TushareEnrichmentProvider:
                 updated.append(replace(bar, main_net_inflow=net, large_order_ratio=safe_div(large_total, bar.amount)))
             return updated, f"{stock.name} 主力资金：已接入 Tushare moneyflow。"
         except Exception as exc:
-            return bars, f"{stock.name} 主力资金暂缺：{_sanitize_provider_error('Tushare moneyflow', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "主力资金", "Tushare moneyflow", exc)
 
     def _with_margin(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         try:
@@ -88,7 +88,7 @@ class TushareEnrichmentProvider:
                 updated.append(replace(bar, margin_balance=_float(row, ["rzye", "rzrqye"], bar.margin_balance) * 10000))
             return updated, f"{stock.name} 融资融券：已接入 Tushare margin_detail。"
         except Exception as exc:
-            return bars, f"{stock.name} 融资融券暂缺：{_sanitize_provider_error('Tushare margin_detail', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "融资融券", "Tushare margin_detail", exc)
 
     def _with_chip(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         try:
@@ -114,7 +114,7 @@ class TushareEnrichmentProvider:
                 )
             return updated, f"{stock.name} 筹码：已接入 Tushare cyq_perf。"
         except Exception as exc:
-            return bars, f"{stock.name} 筹码暂缺：{_sanitize_provider_error('Tushare cyq_perf', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "筹码", "Tushare cyq_perf", exc)
 
     def _with_sector_benchmark(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         benchmark = self.benchmarks.get("sector_benchmarks", {}).get(stock.sector)
@@ -134,7 +134,7 @@ class TushareEnrichmentProvider:
             updated = [replace(bar, sector_return=returns.get(bar.date.strftime("%Y%m%d"), bar.sector_return)) for bar in bars]
             return updated, f"{stock.name} 板块基准：已接入 {benchmark['name']}（{benchmark['symbol']}）。"
         except Exception as exc:
-            return bars, f"{stock.name} 板块基准暂缺：{_sanitize_provider_error('Tushare index_daily', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "板块基准", "Tushare index_daily", exc)
 
 
 class AkShareEnrichmentProvider:
@@ -173,7 +173,7 @@ class AkShareEnrichmentProvider:
                 )
             return updated, f"{stock.name} 主力资金：已接入 AkShare 个股资金流。"
         except Exception as exc:
-            return bars, f"{stock.name} 主力资金暂缺：{_sanitize_provider_error('AkShare fund flow', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "主力资金", "AkShare fund flow", exc)
 
     def _with_margin(self, stock: StockConfig, bars: List[PriceBar]) -> Tuple[List[PriceBar], str]:
         try:
@@ -188,7 +188,7 @@ class AkShareEnrichmentProvider:
             latest = replace(bars[-1], margin_balance=_float(row, ["融资余额", "融资融券余额"], bars[-1].margin_balance))
             return bars[:-1] + [latest], f"{stock.name} 融资融券：已接入 AkShare 最新交易日融资余额。"
         except Exception as exc:
-            return bars, f"{stock.name} 融资融券暂缺：{_sanitize_provider_error('AkShare margin', exc)}"
+            return bars, _enrichment_missing_note(stock.name, "融资融券", "AkShare margin", exc)
 
 
 class MultiEnrichmentProvider:
@@ -200,7 +200,7 @@ class MultiEnrichmentProvider:
             try:
                 self.providers.append((name, _enrichment_provider_from_name(name)))
             except Exception as exc:
-                self.init_notes.append(f"{name} 增强数据源未启用：{_sanitize_provider_error(name, exc)}")
+                self.init_notes.append(_provider_unavailable_note(name, exc))
 
     def enrich_history(self, stock: StockConfig, bars: List[PriceBar], end_date: date) -> Tuple[List[PriceBar], List[str]]:
         notes = list(self.init_notes)
@@ -210,7 +210,7 @@ class MultiEnrichmentProvider:
                 enriched, provider_notes = provider.enrich_history(stock, enriched, end_date)
                 notes.extend(provider_notes)
             except Exception as exc:
-                notes.append(f"{stock.name} {name} 增强失败：{_sanitize_provider_error(name, exc)}")
+                notes.append(_enrichment_missing_note(stock.name, f"{name} 增强", name, exc))
         return enriched, notes
 
 
@@ -229,3 +229,17 @@ def enrichment_provider_from_env() -> EnrichmentProvider:
     if provider == "multi":
         return MultiEnrichmentProvider()
     return _enrichment_provider_from_name(provider)
+
+
+def _provider_unavailable_note(name: str, exc: Exception) -> str:
+    if os.getenv("INCLUDE_PROVIDER_ERRORS", "").lower() in {"1", "true", "yes"}:
+        return f"{name} 增强数据源未启用：{_sanitize_provider_error(name, exc)}"
+    if name == "tushare" and not os.getenv("TUSHARE_TOKEN"):
+        return "Tushare 增强数据源未启用：未配置 TUSHARE_TOKEN。"
+    return f"{name} 增强数据源未启用：初始化失败。"
+
+
+def _enrichment_missing_note(stock_name: str, field: str, source: str, exc: Exception) -> str:
+    if os.getenv("INCLUDE_PROVIDER_ERRORS", "").lower() in {"1", "true", "yes"}:
+        return f"{stock_name} {field}暂缺：{_sanitize_provider_error(source, exc)}"
+    return f"{stock_name} {field}暂缺：补充数据源暂不可用，核心价格与技术指标不受影响。"
