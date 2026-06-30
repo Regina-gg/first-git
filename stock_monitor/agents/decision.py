@@ -14,6 +14,9 @@ def ratio(value: float) -> str:
     return f"{value:.2f}x"
 
 
+NO_MARKET_DATA = "- 真实行情数据暂缺；本模块不生成量价判断，请查看数据质量说明。"
+
+
 class DecisionAgent:
     """Explains what the research result means."""
 
@@ -81,6 +84,8 @@ class DecisionAgent:
         return actions
 
     def _stock_lines(self, stocks: List[StockMetrics]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
         return "\n".join(
             [
                 f"- {s.name}：收盘 {s.close:.2f}，涨跌幅 {pct(s.pct_change)}，量比 {ratio(s.amount_ratio)}（{s.labels['量比']}），趋势 {s.labels['趋势评级']}。"
@@ -98,8 +103,9 @@ class DecisionAgent:
         actions: List[str],
     ) -> dict[str, str]:
         stocks = research.stocks
+        stock_lines = self._stock_lines(stocks)
         news_lines = "\n".join([f"- {item.sentiment}/{item.impact}：{item.title}。{item.summary}" for item in research.news])
-        key_levels = "\n".join(
+        key_levels = NO_MARKET_DATA if not stocks else "\n".join(
             [
                 f"- {s.name}：S1 约 {s.close * 0.97:.2f}，S2 约 {s.close * 0.94:.2f}；R1 约 {s.close * 1.03:.2f}，R2 约 {s.close * 1.06:.2f}。"
                 for s in stocks
@@ -114,25 +120,25 @@ class DecisionAgent:
         return {
             "market_transmission": "- 纳斯达克金龙、A50、海外 AI 链示例数据暂未接入真实行情。\n- 当前按持仓自身历史指标和样例新闻生成盘前判断。",
             "news_summary": news_lines,
-            "funding_preview": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，融资变动率 {pct(s.margin_change_rate)}。" for s in stocks]),
+            "funding_preview": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，融资变动率 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
             "key_levels": key_levels,
-            "daily_outlook": f"- 当日判断：{stance}，置信度 {confidence} 分。\n" + "\n".join([f"- {item}" for item in actions]),
-            "morning_volume": "\n".join([f"- {s.name}：开盘量能代理值量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks]),
-            "fund_flow_check": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks]),
-            "sector_check": "\n".join([f"- {s.name}：相对板块 {pct(s.sector_excess_return)}，相对大盘 {pct(s.market_excess_return)}。" for s in stocks]),
-            "technical_check": "\n".join([f"- {s.name}：均线 {s.ma_alignment}，布林位置 {s.bollinger_position:.2f}，RSI {s.rsi_percentile:.0f} 分位。" for s in stocks]),
-            "strategy_update": "\n".join([f"- {item}" for item in actions]),
-            "price_volume_review": self._stock_lines(stocks),
-            "technical_review": "\n".join([f"- {s.name}：{s.ma_alignment}，RSI {s.rsi_percentile:.0f} 分位，MACD 柱强度 {s.macd_bar_strength:.2f}，布林 {s.labels['布林']}。" for s in stocks]),
-            "funding_review": "\n".join([f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]),
-            "chip_review": "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks]),
-            "sector_comparison": "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks]),
-            "trend_rating": "\n".join([f"- {s.name}：{s.labels['趋势评级']}。自适应校准：{research.thresholds[s.symbol].stock_type}。" for s in stocks]),
+            "daily_outlook": f"- 当日判断：{stance}，置信度 {confidence} 分。\n" + ("\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA),
+            "morning_volume": "\n".join([f"- {s.name}：开盘量能代理值量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks]) or NO_MARKET_DATA,
+            "fund_flow_check": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks]) or NO_MARKET_DATA,
+            "sector_check": "\n".join([f"- {s.name}：相对板块 {pct(s.sector_excess_return)}，相对大盘 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "technical_check": "\n".join([f"- {s.name}：均线 {s.ma_alignment}，布林位置 {s.bollinger_position:.2f}，RSI {s.rsi_percentile:.0f} 分位。" for s in stocks]) or NO_MARKET_DATA,
+            "strategy_update": "\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA,
+            "price_volume_review": stock_lines,
+            "technical_review": "\n".join([f"- {s.name}：{s.ma_alignment}，RSI {s.rsi_percentile:.0f} 分位，MACD 柱强度 {s.macd_bar_strength:.2f}，布林 {s.labels['布林']}。" for s in stocks]) or NO_MARKET_DATA,
+            "funding_review": "\n".join([f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
+            "chip_review": "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks]) or NO_MARKET_DATA,
+            "sector_comparison": "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "trend_rating": "\n".join([f"- {s.name}：{s.labels['趋势评级']}。自适应校准：{research.thresholds[s.symbol].stock_type}。" for s in stocks]) or NO_MARKET_DATA,
             "tomorrow_levels": key_levels,
             "policy_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "政策"]) or "- 暂无已接入政策数据。",
             "industry_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category in {"行业", "海外"}]) or "- 暂无已接入行业数据。",
             "company_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "公司"]) or "- 暂无已接入公司公告数据。",
-            "sentiment_intel": "\n".join([f"- {s.name}：量能 {s.labels['量比']}，RSI {s.labels['RSI']}，趋势 {s.labels['趋势评级']}。" for s in stocks]),
+            "sentiment_intel": "\n".join([f"- {s.name}：量能 {s.labels['量比']}，RSI {s.labels['RSI']}，趋势 {s.labels['趋势评级']}。" for s in stocks]) or NO_MARKET_DATA,
             "next_day_preview": f"- 次日基准情景：{stance}。\n" + "\n".join([f"- {risk}" for risk in risks]),
             "threshold_profiles": threshold_lines,
             "data_quality": "\n".join([f"- {item}" for item in research.data_quality]),
