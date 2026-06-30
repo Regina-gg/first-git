@@ -23,7 +23,7 @@ class EnrichmentTest(unittest.TestCase):
             bars = SampleDataProvider().get_history(stock, date(2026, 6, 30), 80)
             enriched, notes = provider.enrich_history(stock, bars, date(2026, 6, 30))
             self.assertEqual(enriched[-1].close, bars[-1].close)
-            self.assertIn("tushare 增强数据源未启用", "；".join(notes))
+            self.assertIn("Tushare 增强数据源未启用", "；".join(notes))
         finally:
             if old_token is not None:
                 os.environ["TUSHARE_TOKEN"] = old_token
