@@ -70,6 +70,35 @@ Common failures:
 
 These `.yaml` files are intentionally JSON-compatible so V1 can run with the Python standard library only.
 
+## Watchlist Management
+
+The watched stock list is stored in `config/watchlist.yaml`. For low-frequency changes, use the CLI instead of editing JSON by hand:
+
+```bash
+python3 -m stock_monitor.watchlist list
+python3 -m stock_monitor.watchlist validate
+python3 -m stock_monitor.watchlist add \
+  --symbol 000001.SZ \
+  --name 平安银行 \
+  --sector 银行 \
+  --float-market-cap-cny 200000000000 \
+  --watch-metrics volume,money_flow,technical,chip
+python3 -m stock_monitor.watchlist remove --symbol 000001.SZ
+```
+
+After changing the watchlist:
+
+```bash
+python3 -m stock_monitor.watchlist validate
+python3 -m stock_monitor.calibrate_thresholds
+python3 -m stock_monitor.run_report --type close_report --dry-run
+git add config/watchlist.yaml
+git commit -m "Update stock watchlist"
+git push origin main
+```
+
+GitHub Actions will use the updated watchlist on the next scheduled or manually triggered run.
+
 ## Templates
 
 Report templates live under `templates/*.md.j2`. Each report has independent fields and layout so future edits to wording, order, or formatting do not require changing the agent workflow.
