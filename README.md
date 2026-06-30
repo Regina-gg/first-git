@@ -24,6 +24,7 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 ```bash
 export DATA_PROVIDER=multi
 export MARKET_DATA_CHAIN=tushare,eastmoney,akshare
+export PRICE_ADJUST=qfq
 export ENRICHMENT_PROVIDER=multi
 export ENRICHMENT_CHAIN=tushare,akshare
 export TUSHARE_TOKEN=your_tushare_token_optional
@@ -36,6 +37,8 @@ Supported V1 sources:
 - `eastmoney`: no token; calls Eastmoney historical K-line directly.
 - `akshare`: no token; uses AkShare's Eastmoney wrapper and stock news helper.
 - `sample`: deterministic local sample data for tests and offline demos.
+
+`PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
 
 For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. If it is missing or quota-limited, the workflow automatically falls back to Eastmoney and then AkShare.
 
