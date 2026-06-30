@@ -12,4 +12,4 @@ def today_shanghai() -> date:
 
 
 def format_generated_at() -> str:
-    return datetime.now(APP_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S CST")
+    return datetime.now(APP_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S 北京时间")
