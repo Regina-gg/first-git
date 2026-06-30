@@ -1,0 +1,16 @@
+{
+  "market_data": {
+    "price_adjust_default": "qfq",
+    "priority": ["tushare", "eastmoney", "akshare"],
+    "usage": "用于价格、成交额、换手率、技术指标和自适应阈值校准"
+  },
+  "core_evidence": {
+    "priority": ["company_announcements", "cninfo", "sse_szse_bse", "periodic_reports", "regulator_filings"],
+    "usage": "仅在后续深度分析、周度复盘和重大事项模块中作为核心证据"
+  },
+  "sentiment_only": {
+    "priority": ["news", "forums", "stock_boards", "social_media"],
+    "usage": "仅用于新闻和情绪模块，不作为基本面或估值核心证据"
+  },
+  "missing_data_policy": "未查得或未接入的数据必须在数据质量中标注，不能编造。"
+}
