@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import os
+import signal
+from contextlib import contextmanager
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, Iterator, List, Optional, Protocol
 
 from .models import NewsItem, PriceBar, StockConfig
 
@@ -245,7 +247,8 @@ class MultiSourceDataProvider:
         errors = []
         for name, provider in self.providers:
             try:
-                bars = provider.get_history(stock, end_date, lookback_days)
+                with _provider_timeout(name):
+                    bars = provider.get_history(stock, end_date, lookback_days)
                 self.quality_notes.append(f"{stock.name}（{stock.symbol}）行情使用 {name} 数据源。")
                 return bars
             except Exception as exc:
@@ -293,6 +296,35 @@ def _tushare_adjust() -> Optional[str]:
 
 def _eastmoney_fqt() -> str:
     return {"none": "0", "qfq": "1", "hfq": "2"}[_price_adjust()]
+
+
+def _provider_timeout_seconds() -> int:
+    try:
+        return max(1, int(os.getenv("DATA_PROVIDER_TIMEOUT_SECONDS", "20")))
+    except ValueError:
+        return 20
+
+
+@contextmanager
+def _provider_timeout(name: str) -> Iterator[None]:
+    seconds = _provider_timeout_seconds()
+    if not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    def _raise_timeout(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"{name} 数据源超过 {seconds} 秒未返回")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, previous_timer[0], previous_timer[1])
 
 
 def _sanitize_provider_error(source: str, exc: Exception) -> str:
