@@ -43,8 +43,6 @@ class LarkCliDelivery:
                 chat_id,
                 "--markdown",
                 message.markdown,
-                "--idempotency-key",
-                message.idempotency_key,
             ]
         )
         if dry_run:

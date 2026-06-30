@@ -37,6 +37,11 @@ jobs:
           test -n "$FEISHU_APP_ID"
           test -n "$FEISHU_APP_SECRET"
           test -n "$FEISHU_CHAT_ID"
+          [[ "$FEISHU_APP_ID" == cli_* ]]
+          [[ "$FEISHU_CHAT_ID" == oc_* ]]
+          [[ "$FEISHU_APP_ID" != *=* ]]
+          [[ "$FEISHU_APP_SECRET" != *=* ]]
+          [[ "$FEISHU_CHAT_ID" != *=* ]]
       - name: Configure lark-cli bot profile
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}

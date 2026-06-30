@@ -22,3 +22,4 @@ class DeliveryTest(unittest.TestCase):
         self.assertIn("--markdown", command)
         self.assertIn("--dry-run", command)
         self.assertIn("oc_dry_run_placeholder", command)
+        self.assertNotIn("--idempotency-key", command)
