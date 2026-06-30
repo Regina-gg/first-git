@@ -40,7 +40,7 @@ class WriterTest(unittest.TestCase):
             message = writer.render(decision_with_sections(report_type), None)
             self.assertNotIn("{{", message.markdown)
             self.assertIn("数据质量", message.markdown)
-            self.assertRegex(message.markdown, r"生成时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} CST")
+            self.assertRegex(message.markdown, r"生成时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} 北京时间")
 
     def test_idempotency_key_uses_feishu_safe_characters(self):
         message = WriterAgent().render(decision_with_sections(ReportType.CLOSE_REPORT), "oc_xxx:bad/value")
