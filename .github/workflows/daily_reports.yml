@@ -74,6 +74,7 @@ jobs:
         env:
           DATA_PROVIDER: multi
           MARKET_DATA_CHAIN: eastmoney,akshare
+          DATA_PROVIDER_TIMEOUT_SECONDS: "20"
           PRICE_ADJUST: qfq
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
@@ -83,6 +84,7 @@ jobs:
         env:
           DATA_PROVIDER: multi
           MARKET_DATA_CHAIN: eastmoney,akshare
+          DATA_PROVIDER_TIMEOUT_SECONDS: "20"
           PRICE_ADJUST: qfq
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
