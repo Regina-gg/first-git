@@ -49,5 +49,7 @@ class WorkflowTest(unittest.TestCase):
             {stock.symbol: profile},
         )
         message = WriterAgent().render(DecisionAgent().run(research), None)
+        self.assertIn("数据异常", message.markdown)
         self.assertIn("行情数据暂缺", message.markdown)
-        self.assertIn("upstream disconnected", message.markdown)
+        self.assertNotIn("upstream disconnected", message.markdown)
+        self.assertIn("未取得任何关注股票的有效行情数据", message.markdown)
