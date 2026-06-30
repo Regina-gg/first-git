@@ -150,14 +150,18 @@ class TushareDataProvider:
     def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
         start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
-        frame = self.pro.daily(ts_code=stock.symbol, start_date=start_date, end_date=end)
+        try:
+            frame = self.pro.daily(ts_code=stock.symbol, start_date=start_date, end_date=end)
+        except Exception as exc:
+            raise RuntimeError(_sanitize_provider_error("Tushare daily", exc)) from exc
         if frame is None or len(frame) == 0:
             raise RuntimeError(f"Tushare returned no daily bars for {stock.symbol}.")
         try:
             basics = self.pro.daily_basic(ts_code=stock.symbol, start_date=start_date, end_date=end, fields="ts_code,trade_date,turnover_rate")
             if basics is not None and len(basics) > 0:
                 frame = frame.merge(basics[["trade_date", "turnover_rate"]], on="trade_date", how="left")
-        except Exception:
+        except Exception as exc:
+            self.quality_notes.append(f"{stock.name}（{stock.symbol}）Tushare daily_basic 暂不可用：{_sanitize_provider_error('Tushare daily_basic', exc)}")
             frame["turnover_rate"] = 0.0
         rows = frame.sort_values("trade_date").tail(lookback_days).to_dict("records")
         bars = [_bar_from_tushare_row(row) for row in rows]
@@ -186,21 +190,24 @@ class EastmoneyDirectDataProvider:
     def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
         start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
-        response = self.requests.get(
-            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-            params={
-                "secid": _eastmoney_secid(stock.symbol),
-                "fields1": "f1,f2,f3,f4,f5,f6",
-                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-                "klt": "101",
-                "fqt": "0",
-                "beg": start_date,
-                "end": end,
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = self.requests.get(
+                "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                params={
+                    "secid": _eastmoney_secid(stock.symbol),
+                    "fields1": "f1,f2,f3,f4,f5,f6",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                    "klt": "101",
+                    "fqt": "0",
+                    "beg": start_date,
+                    "end": end,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            raise RuntimeError(_sanitize_provider_error("Eastmoney", exc)) from exc
         klines = payload.get("data", {}).get("klines", []) if isinstance(payload, dict) else []
         if not klines:
             raise RuntimeError(f"Eastmoney returned no daily bars for {stock.symbol}.")
@@ -238,7 +245,9 @@ class MultiSourceDataProvider:
                 self.quality_notes.append(f"{stock.name}（{stock.symbol}）行情使用 {name} 数据源。")
                 return bars
             except Exception as exc:
-                errors.append(f"{name}: {exc}")
+                error = _sanitize_provider_error(name, exc)
+                errors.append(f"{name}: {error}")
+                self.quality_notes.append(f"{stock.name}（{stock.symbol}）{name} 数据源失败，已尝试降级：{error}")
         raise RuntimeError("; ".join(errors))
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
@@ -261,6 +270,16 @@ def _eastmoney_secid(symbol: str) -> str:
     if symbol.endswith(".SH") or code.startswith("6"):
         return f"1.{code}"
     return f"0.{code}"
+
+
+def _sanitize_provider_error(source: str, exc: Exception) -> str:
+    message = str(exc).replace(os.getenv("TUSHARE_TOKEN", ""), "[redacted]") if os.getenv("TUSHARE_TOKEN") else str(exc)
+    lowered = message.lower()
+    if any(keyword in message for keyword in ["积分", "权限", "抱歉", "访问该接口的权限", "每分钟最多访问"]):
+        return f"{source} 权限/积分/频率限制，已降级到下一数据源"
+    if any(keyword in lowered for keyword in ["permission", "quota", "rate limit", "limit", "forbidden", "unauthorized"]):
+        return f"{source} 权限/额度/频率限制，已降级到下一数据源"
+    return message[:240]
 
 
 def _value(row: Dict[str, Any], names: List[str], default: Any = 0.0) -> Any:
