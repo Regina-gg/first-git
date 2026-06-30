@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import signal
+import time
 from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Any, Dict, Iterator, List, Optional, Protocol
@@ -197,9 +198,10 @@ class EastmoneyDirectDataProvider:
         start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
         try:
-            response = self.requests.get(
+            response = _requests_get_with_retry(
+                self.requests,
                 "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-                params={
+                {
                     "secid": _eastmoney_secid(stock.symbol),
                     "fields1": "f1,f2,f3,f4,f5,f6",
                     "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
@@ -208,7 +210,6 @@ class EastmoneyDirectDataProvider:
                     "beg": start_date,
                     "end": end,
                 },
-                timeout=15,
             )
             response.raise_for_status()
             payload = response.json()
@@ -226,11 +227,46 @@ class EastmoneyDirectDataProvider:
         return [NewsItem("东方财富新闻源未接入", "公司", "中性", "弱", "当前东方财富直连适配器仅用于日线行情。")]
 
 
+class SinaDailyDataProvider:
+    """Sina daily kline fallback for A-share OHLCV."""
+
+    def __init__(self) -> None:
+        try:
+            import requests  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("DATA_PROVIDER=sina requires installing requests.") from exc
+        self.requests = requests
+        self.quality_notes = [
+            "行情数据兜底来自新浪日线接口，包含 OHLC 和成交量；成交额、换手率按中性值处理。",
+        ]
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        try:
+            response = _requests_get_with_retry(
+                self.requests,
+                "https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_sina_kline=/CN_MarketDataService.getKLineData",
+                {"symbol": _sina_symbol(stock.symbol), "scale": "240", "ma": "no", "datalen": str(max(lookback_days, 320))},
+            )
+            response.raise_for_status()
+            rows = _parse_sina_jsonp(response.text)
+        except Exception as exc:
+            raise RuntimeError(_sanitize_provider_error("Sina", exc)) from exc
+        if not rows:
+            raise RuntimeError(f"Sina returned no daily bars for {stock.symbol}.")
+        bars = [_bar_from_sina_row(row) for row in rows[-lookback_days:]]
+        if len(bars) < min(60, lookback_days):
+            raise RuntimeError(f"Sina returned only {len(bars)} bars for {stock.symbol}; at least 60 are required.")
+        return bars
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        return [NewsItem("新浪新闻源未接入", "公司", "中性", "弱", "当前新浪适配器仅用于日线行情兜底。")]
+
+
 class MultiSourceDataProvider:
     """Fallback chain across configured market data providers."""
 
     def __init__(self, chain: Optional[str] = None) -> None:
-        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "eastmoney,akshare")).split(",") if item.strip()]
+        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "eastmoney,sina,akshare")).split(",") if item.strip()]
         self.providers = []
         self.quality_notes = ["多数据源模式已启用，按配置顺序尝试：" + " -> ".join(names)]
         for name in names:
@@ -279,6 +315,11 @@ def _eastmoney_secid(symbol: str) -> str:
     return f"0.{code}"
 
 
+def _sina_symbol(symbol: str) -> str:
+    code = _strip_exchange(symbol)
+    return ("sh" if symbol.endswith(".SH") or code.startswith("6") else "sz") + code
+
+
 def _price_adjust() -> str:
     value = os.getenv("PRICE_ADJUST", "qfq").strip().lower()
     return value if value in {"qfq", "hfq", "none"} else "qfq"
@@ -296,6 +337,27 @@ def _tushare_adjust() -> Optional[str]:
 
 def _eastmoney_fqt() -> str:
     return {"none": "0", "qfq": "1", "hfq": "2"}[_price_adjust()]
+
+
+def _request_headers() -> Dict[str, str]:
+    return {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://quote.eastmoney.com/",
+        "Connection": "close",
+    }
+
+
+def _requests_get_with_retry(requests_module: Any, url: str, params: Dict[str, str], attempts: int = 3) -> Any:
+    last_error: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return requests_module.get(url, params=params, headers=_request_headers(), timeout=8)
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(0.5 * (attempt + 1))
+    raise last_error or RuntimeError("request failed")
 
 
 def _provider_timeout_seconds() -> int:
@@ -415,6 +477,40 @@ def _bar_from_tushare_row(row: Dict[str, Any]) -> PriceBar:
     )
 
 
+def _parse_sina_jsonp(text: str) -> List[Dict[str, Any]]:
+    import json
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start < 0 or end < start:
+        return []
+    return json.loads(text[start : end + 1])
+
+
+def _bar_from_sina_row(row: Dict[str, Any]) -> PriceBar:
+    close = _float(row, ["close"])
+    open_price = _float(row, ["open"], close)
+    volume = _float(row, ["volume"], 0.0)
+    return PriceBar(
+        date=_trade_date(_value(row, ["day", "date"])),
+        open=open_price,
+        high=_float(row, ["high"], close),
+        low=_float(row, ["low"], close),
+        close=close,
+        amount=volume * close * 100,
+        turnover_rate=0.0,
+        main_net_inflow=0.0,
+        northbound_net_inflow=0.0,
+        large_order_ratio=0.0,
+        margin_balance=1.0,
+        profit_ratio=0.5,
+        average_cost=close,
+        chip_width_90=1.0,
+        sector_return=0.0,
+        market_return=0.0,
+    )
+
+
 def _bar_from_eastmoney_kline(kline: str) -> PriceBar:
     parts = kline.split(",")
     if len(parts) < 11:
@@ -450,6 +546,8 @@ def _single_provider_from_name(name: str):
         return TushareDataProvider()
     if name == "eastmoney":
         return EastmoneyDirectDataProvider()
+    if name == "sina":
+        return SinaDailyDataProvider()
     raise ValueError(f"Unsupported provider in V1: {name}")
 
 
