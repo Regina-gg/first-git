@@ -7,6 +7,7 @@ from stock_monitor.data_providers import _bar_from_eastmoney_kline
 from stock_monitor.data_providers import _bar_from_tushare_row
 from stock_monitor.data_providers import _eastmoney_fqt
 from stock_monitor.data_providers import _price_adjust
+from stock_monitor.data_providers import _provider_timeout_seconds
 from stock_monitor.metrics import compute_metrics, percentile_rank
 from stock_monitor.models import StockConfig
 from stock_monitor.thresholds import calibrate_stock
@@ -87,4 +88,6 @@ class MetricsTest(unittest.TestCase):
         with open(".github/workflows/daily_reports.yml", encoding="utf-8") as file:
             workflow = file.read()
         self.assertIn("MARKET_DATA_CHAIN: eastmoney,akshare", workflow)
+        self.assertIn('DATA_PROVIDER_TIMEOUT_SECONDS: "20"', workflow)
         self.assertNotIn("MARKET_DATA_CHAIN: tushare", workflow)
+        self.assertEqual(_provider_timeout_seconds(), 20)
