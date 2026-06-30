@@ -1,0 +1,34 @@
+{
+  "reports": {
+    "pre_market": {
+      "schedule": "08:30",
+      "template": "templates/pre_market.md.j2",
+      "required_fields": ["title", "generated_at", "market_transmission", "news_summary", "funding_preview", "key_levels", "daily_outlook", "data_quality"],
+      "modules": ["隔夜外盘传导", "消息面汇总", "资金面前瞻", "关键价位提示", "当日预判"]
+    },
+    "morning_check": {
+      "schedule": "10:00",
+      "template": "templates/morning_check.md.j2",
+      "required_fields": ["title", "generated_at", "morning_volume", "fund_flow_check", "sector_check", "technical_check", "strategy_update", "data_quality"],
+      "modules": ["开盘半小时量能", "资金流向验证", "板块联动验证", "技术形态确认", "策略更新"]
+    },
+    "close_report": {
+      "schedule": "15:10",
+      "template": "templates/close_report.md.j2",
+      "required_fields": ["title", "generated_at", "price_volume_review", "technical_review", "funding_review", "chip_review", "sector_comparison", "trend_rating", "tomorrow_levels", "data_quality"],
+      "modules": ["量价复盘", "技术面", "资金面", "筹码结构", "板块对比", "趋势评级更新", "明日关键价位"]
+    },
+    "evening_intel": {
+      "schedule": "21:00",
+      "template": "templates/evening_intel.md.j2",
+      "required_fields": ["title", "generated_at", "policy_intel", "industry_intel", "company_intel", "sentiment_intel", "next_day_preview", "data_quality"],
+      "modules": ["政策面", "行业面", "公司面", "情绪面", "次日前瞻"]
+    },
+    "weekly_review": {
+      "enabled": false,
+      "schedule": "Sunday 20:00",
+      "template": "templates/weekly_review.md.j2",
+      "modules": ["周线技术面复盘", "资金面周度流向", "DCF 动态估值", "基本面周度更新", "下周展望与策略"]
+    }
+  }
+}

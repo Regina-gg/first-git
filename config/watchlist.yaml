@@ -1,0 +1,24 @@
+{
+  "timezone": "Asia/Shanghai",
+  "stocks": [
+    {
+      "symbol": "603019.SH",
+      "name": "中科曙光",
+      "sector": "算力",
+      "float_market_cap_cny": 156000000000,
+      "watch_metrics": ["volume", "money_flow", "technical", "chip"]
+    },
+    {
+      "symbol": "300750.SZ",
+      "name": "宁德时代",
+      "sector": "新能源",
+      "float_market_cap_cny": 860000000000,
+      "watch_metrics": ["volume", "money_flow", "technical", "valuation"]
+    }
+  ],
+  "delivery": {
+    "provider": "lark_cli",
+    "target_type": "chat",
+    "chat_id_env": "FEISHU_CHAT_ID"
+  }
+}

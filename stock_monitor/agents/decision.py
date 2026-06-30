@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from typing import List
+
+from ..metrics import classify_trend
+from ..models import DecisionResult, ReportType, ResearchResult, StockMetrics
+
+
+def pct(value: float) -> str:
+    return f"{value * 100:+.2f}%"
+
+
+def ratio(value: float) -> str:
+    return f"{value:.2f}x"
+
+
+class DecisionAgent:
+    """Explains what the research result means."""
+
+    def run(self, research: ResearchResult) -> DecisionResult:
+        stocks = research.stocks
+        stance_score = sum(self._stock_score(stock) for stock in stocks)
+        stance = "偏多" if stance_score > 1 else "偏空" if stance_score < -1 else "震荡"
+        confidence = min(90, max(45, 60 + abs(stance_score) * 8))
+        risks = self._risks(stocks)
+        catalysts = self._catalysts(stocks, research)
+        actions = self._actions(stocks, stance)
+        sections = self._sections(research, stance, confidence, risks, catalysts, actions)
+        return DecisionResult(
+            report_type=research.report_type,
+            report_date=research.report_date,
+            summary=f"{research.report_date.isoformat()} 综合判断：{stance}，置信度 {confidence} 分。",
+            confidence=confidence,
+            stance=stance,
+            risks=risks,
+            catalysts=catalysts,
+            actions=actions,
+            sections=sections,
+        )
+
+    def _stock_score(self, stock: StockMetrics) -> int:
+        score = 0
+        score += 1 if stock.pct_change > 0 else -1
+        score += 1 if stock.main_fund_strength > 0.05 else -1 if stock.main_fund_strength < -0.05 else 0
+        score += 1 if stock.ma_alignment.startswith("多头") else -1 if stock.ma_alignment.startswith("空头") else 0
+        return score
+
+    def _risks(self, stocks: List[StockMetrics]) -> List[str]:
+        risks = []
+        for stock in stocks:
+            if stock.rsi_percentile > 90:
+                risks.append(f"{stock.name} RSI 位于 {stock.rsi_percentile:.0f} 分位，短线有过热风险。")
+            if stock.amount_ratio > 1.5 and stock.pct_change < 0:
+                risks.append(f"{stock.name} 放量下跌，需防范资金出逃。")
+            if stock.ma10_deviation < -0.03:
+                risks.append(f"{stock.name} 跌破 10 日均线超过 3%，技术支撑转弱。")
+        return risks or ["未出现多维度共振的高等级风险信号。"]
+
+    def _catalysts(self, stocks: List[StockMetrics], research: ResearchResult) -> List[str]:
+        catalysts = []
+        for news in research.news:
+            if news.sentiment == "利好":
+                catalysts.append(f"{news.category}：{news.title}（影响 {news.impact}）。")
+        for stock in stocks:
+            if stock.main_fund_strength > 0.05 and stock.amount_ratio > 1.3:
+                catalysts.append(f"{stock.name} 资金流入配合放量，短线情绪偏强。")
+        return catalysts or ["暂无强催化，重点观察资金和板块联动是否延续。"]
+
+    def _actions(self, stocks: List[StockMetrics], stance: str) -> List[str]:
+        actions = []
+        for stock in stocks:
+            trend = classify_trend(stock)
+            if trend in {"强多", "弱多"} and stock.rsi_percentile < 90:
+                actions.append(f"{stock.name}：维持关注，若放量突破前高可上调策略。")
+            elif trend in {"弱空", "强空"}:
+                actions.append(f"{stock.name}：降低进攻性，等待缩量企稳或资金回流。")
+            else:
+                actions.append(f"{stock.name}：按震荡处理，围绕 5/10 日线观察承接。")
+        if stance == "偏空":
+            actions.append("组合层面优先控制仓位，避免追高。")
+        return actions
+
+    def _stock_lines(self, stocks: List[StockMetrics]) -> str:
+        return "\n".join(
+            [
+                f"- {s.name}：收盘 {s.close:.2f}，涨跌幅 {pct(s.pct_change)}，量比 {ratio(s.amount_ratio)}（{s.labels['量比']}），趋势 {s.labels['趋势评级']}。"
+                for s in stocks
+            ]
+        )
+
+    def _sections(
+        self,
+        research: ResearchResult,
+        stance: str,
+        confidence: int,
+        risks: List[str],
+        catalysts: List[str],
+        actions: List[str],
+    ) -> dict[str, str]:
+        stocks = research.stocks
+        news_lines = "\n".join([f"- {item.sentiment}/{item.impact}：{item.title}。{item.summary}" for item in research.news])
+        key_levels = "\n".join(
+            [
+                f"- {s.name}：S1 约 {s.close * 0.97:.2f}，S2 约 {s.close * 0.94:.2f}；R1 约 {s.close * 1.03:.2f}，R2 约 {s.close * 1.06:.2f}。"
+                for s in stocks
+            ]
+        )
+        threshold_lines = "\n".join(
+            [
+                f"- {p.name}：{p.stock_type}，阈值系数 {p.threshold_multiplier:.1f}，资金阈值系数 {p.funding_multiplier:.1f}，Beta {p.beta_250d:.2f}。"
+                for p in research.thresholds.values()
+            ]
+        )
+        return {
+            "market_transmission": "- 纳斯达克金龙、A50、海外 AI 链示例数据暂未接入真实行情。\n- 当前按持仓自身历史指标和样例新闻生成盘前判断。",
+            "news_summary": news_lines,
+            "funding_preview": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，融资变动率 {pct(s.margin_change_rate)}。" for s in stocks]),
+            "key_levels": key_levels,
+            "daily_outlook": f"- 当日判断：{stance}，置信度 {confidence} 分。\n" + "\n".join([f"- {item}" for item in actions]),
+            "morning_volume": "\n".join([f"- {s.name}：开盘量能代理值量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks]),
+            "fund_flow_check": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks]),
+            "sector_check": "\n".join([f"- {s.name}：相对板块 {pct(s.sector_excess_return)}，相对大盘 {pct(s.market_excess_return)}。" for s in stocks]),
+            "technical_check": "\n".join([f"- {s.name}：均线 {s.ma_alignment}，布林位置 {s.bollinger_position:.2f}，RSI {s.rsi_percentile:.0f} 分位。" for s in stocks]),
+            "strategy_update": "\n".join([f"- {item}" for item in actions]),
+            "price_volume_review": self._stock_lines(stocks),
+            "technical_review": "\n".join([f"- {s.name}：{s.ma_alignment}，RSI {s.rsi_percentile:.0f} 分位，MACD 柱强度 {s.macd_bar_strength:.2f}，布林 {s.labels['布林']}。" for s in stocks]),
+            "funding_review": "\n".join([f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]),
+            "chip_review": "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks]),
+            "sector_comparison": "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks]),
+            "trend_rating": "\n".join([f"- {s.name}：{s.labels['趋势评级']}。自适应校准：{research.thresholds[s.symbol].stock_type}。" for s in stocks]),
+            "tomorrow_levels": key_levels,
+            "policy_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "政策"]) or "- 暂无已接入政策数据。",
+            "industry_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category in {"行业", "海外"}]) or "- 暂无已接入行业数据。",
+            "company_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "公司"]) or "- 暂无已接入公司公告数据。",
+            "sentiment_intel": "\n".join([f"- {s.name}：量能 {s.labels['量比']}，RSI {s.labels['RSI']}，趋势 {s.labels['趋势评级']}。" for s in stocks]),
+            "next_day_preview": f"- 次日基准情景：{stance}。\n" + "\n".join([f"- {risk}" for risk in risks]),
+            "threshold_profiles": threshold_lines,
+            "data_quality": "\n".join([f"- {item}" for item in research.data_quality]),
+        }
