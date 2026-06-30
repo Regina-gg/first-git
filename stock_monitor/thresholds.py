@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Dict, List
 
 from .config import PROJECT_ROOT, load_config
-from .data_providers import MarketDataProvider
+from .data_providers import MarketDataProvider, SampleDataProvider
 from .metrics import beta, returns, safe_div
 from .models import PriceBar, StockConfig, ThresholdProfile
 
@@ -68,9 +68,17 @@ def calibrate_watchlist(stocks: List[StockConfig], provider: MarketDataProvider,
     settings = load_config("config/thresholds.yaml")
     lookback = max(settings["windows"].values()) + 5
     profiles = {}
+    fallback = SampleDataProvider()
     for stock in stocks:
-        bars = provider.get_history(stock, as_of, lookback)
-        profiles[stock.symbol] = calibrate_stock(stock, bars, as_of, settings)
+        notes: List[str] = []
+        try:
+            bars = provider.get_history(stock, as_of, lookback)
+        except Exception as exc:
+            bars = fallback.get_history(stock, as_of, lookback)
+            notes.append(f"阈值校准使用样例基准兜底；真实数据源暂不可用：{exc}")
+        profile = calibrate_stock(stock, bars, as_of, settings)
+        profile.notes.extend(notes)
+        profiles[stock.symbol] = profile
     return profiles
 
 
