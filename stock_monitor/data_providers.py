@@ -228,7 +228,7 @@ class MultiSourceDataProvider:
     """Fallback chain across configured market data providers."""
 
     def __init__(self, chain: Optional[str] = None) -> None:
-        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "tushare,eastmoney,akshare")).split(",") if item.strip()]
+        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "eastmoney,akshare")).split(",") if item.strip()]
         self.providers = []
         self.quality_notes = ["多数据源模式已启用，按配置顺序尝试：" + " -> ".join(names)]
         for name in names:
