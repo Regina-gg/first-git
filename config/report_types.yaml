@@ -7,7 +7,7 @@
       "modules": ["隔夜外盘传导", "消息面汇总", "资金面前瞻", "关键价位提示", "当日预判"]
     },
     "morning_check": {
-      "schedule": "10:00",
+      "schedule": "10:05",
       "template": "templates/morning_check.md.j2",
       "required_fields": ["title", "generated_at", "morning_volume", "fund_flow_check", "sector_check", "technical_check", "strategy_update", "data_quality"],
       "modules": ["开盘半小时量能", "资金流向验证", "板块联动验证", "技术形态确认", "策略更新"]
@@ -19,7 +19,7 @@
       "modules": ["量价复盘", "技术面", "资金面", "筹码结构", "板块对比", "趋势评级更新", "明日关键价位"]
     },
     "evening_intel": {
-      "schedule": "21:00",
+      "schedule": "21:05",
       "template": "templates/evening_intel.md.j2",
       "required_fields": ["title", "generated_at", "policy_intel", "industry_intel", "company_intel", "sentiment_intel", "next_day_preview", "data_quality"],
       "modules": ["政策面", "行业面", "公司面", "情绪面", "次日前瞻"]

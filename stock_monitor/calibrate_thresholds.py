@@ -6,12 +6,13 @@ from datetime import date
 
 from .data_providers import provider_from_name
 from .thresholds import calibrate_watchlist, save_profiles
+from .time_utils import today_shanghai
 from .workflow import load_stocks
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Calibrate adaptive stock thresholds.")
-    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--date", default=today_shanghai().isoformat())
     return parser.parse_args()
 
 

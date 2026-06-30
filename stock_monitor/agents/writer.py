@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from typing import Dict, Optional
 
 from ..config import ensure_project_path, load_config
 from ..models import DecisionResult, ReportMessage
+from ..time_utils import format_generated_at
 
 
 TOKEN_RE = re.compile(r"{{\s*([a-zA-Z0-9_.]+)\s*}}")
@@ -28,7 +28,7 @@ class WriterAgent:
         title = self._title(decision)
         context: Dict[str, str] = {
             "title": title,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_at": format_generated_at(),
             "data_quality": "\n".join([f"- {item}" for item in ["缺失字段会在 Research 阶段标注，Writer 不编造未接入数据。"]]),
         }
         context.update(decision.sections)
