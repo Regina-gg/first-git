@@ -6,14 +6,24 @@
       "name": "中科曙光",
       "sector": "算力",
       "float_market_cap_cny": 156000000000,
-      "watch_metrics": ["volume", "money_flow", "technical", "chip"]
+      "watch_metrics": [
+        "volume",
+        "money_flow",
+        "technical",
+        "chip"
+      ]
     },
     {
-      "symbol": "300750.SZ",
-      "name": "宁德时代",
-      "sector": "新能源",
-      "float_market_cap_cny": 860000000000,
-      "watch_metrics": ["volume", "money_flow", "technical", "valuation"]
+      "symbol": "600487.SH",
+      "name": "亨通光电",
+      "sector": "通信光纤",
+      "float_market_cap_cny": 36000000000.0,
+      "watch_metrics": [
+        "volume",
+        "money_flow",
+        "technical",
+        "chip"
+      ]
     }
   ],
   "delivery": {
