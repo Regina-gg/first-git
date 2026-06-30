@@ -34,7 +34,10 @@ class ResearchAgent:
         )
         metrics = []
         for stock in stocks:
-            bars = self.market_provider.get_history(stock, report_date, 260)
-            metrics.append(compute_metrics(stock, bars, thresholds[stock.symbol]))
+            try:
+                bars = self.market_provider.get_history(stock, report_date, 260)
+                metrics.append(compute_metrics(stock, bars, thresholds[stock.symbol]))
+            except Exception as exc:
+                data_quality.append(f"{stock.name}（{stock.symbol}）行情数据暂缺：{exc}")
         news = self.news_provider.get_news(stocks, report_date)
         return ResearchResult(report_type, report_date, metrics, thresholds, news, data_quality)
