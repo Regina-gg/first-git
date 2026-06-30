@@ -5,6 +5,8 @@ from stock_monitor.data_providers import SampleDataProvider
 from stock_monitor.data_providers import _bar_from_akshare_row
 from stock_monitor.data_providers import _bar_from_eastmoney_kline
 from stock_monitor.data_providers import _bar_from_tushare_row
+from stock_monitor.data_providers import _eastmoney_fqt
+from stock_monitor.data_providers import _price_adjust
 from stock_monitor.metrics import compute_metrics, percentile_rank
 from stock_monitor.models import StockConfig
 from stock_monitor.thresholds import calibrate_stock
@@ -76,3 +78,7 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(bar.amount, 123456)
         self.assertAlmostEqual(bar.turnover_rate, 0.025)
         self.assertAlmostEqual(bar.market_return, 0.012)
+
+    def test_default_price_adjustment_is_forward_adjusted(self):
+        self.assertEqual(_price_adjust(), "qfq")
+        self.assertEqual(_eastmoney_fqt(), "1")
