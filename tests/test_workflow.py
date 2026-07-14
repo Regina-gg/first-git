@@ -51,3 +51,34 @@ class WorkflowTest(unittest.TestCase):
         message = WriterAgent().render(DecisionAgent().run(research), None)
         self.assertIn("行情数据暂缺", message.markdown)
         self.assertIn("upstream disconnected", message.markdown)
+
+    def test_evening_report_has_non_empty_intel_fallbacks_and_short_quality(self):
+        stock = StockConfig("603019.SH", "中科曙光", "算力", 100_000_000_000, ["amount"])
+        profile = ThresholdProfile(
+            symbol=stock.symbol,
+            name=stock.name,
+            as_of=date(2026, 6, 30),
+            short_mean_days=20,
+            percentile_days=60,
+            volatility_days=20,
+            beta_days=250,
+            avg_amount_20d=1,
+            avg_turnover_20d=1,
+            avg_amplitude_20d=1,
+            pct_change_std_20d=1,
+            beta_250d=1,
+            stock_type="中波动",
+            threshold_multiplier=1,
+            funding_multiplier=1,
+        )
+        research = ResearchAgent(FailingProvider(), FailingProvider()).run(
+            ReportType.EVENING_INTEL,
+            date(2026, 6, 30),
+            [stock],
+            {stock.symbol: profile},
+        )
+        message = WriterAgent().render(DecisionAgent().run(research), None)
+        self.assertNotIn("暂无已接入政策数据", message.markdown)
+        self.assertNotIn("暂无已接入行业数据", message.markdown)
+        quality = message.markdown.split("## 数据质量", 1)[1]
+        self.assertLessEqual(len([line for line in quality.splitlines() if line.strip().startswith("- ")]), 4)

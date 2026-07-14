@@ -121,10 +121,11 @@ class AkShareDataProvider:
             for row in frame.head(3).to_dict("records"):
                 title = str(_value(row, ["新闻标题", "标题", "title"], f"{stock.name} 新闻"))
                 summary = str(_value(row, ["新闻内容", "内容", "summary"], "新闻摘要暂缺。"))
-                items.append(NewsItem(title=title, category="公司", sentiment="中性", impact="中", summary=summary[:160]))
+                category = _classify_news_category(title, summary, stock)
+                items.append(NewsItem(title=title, category=category, sentiment=_classify_sentiment(title + summary), impact="中", summary=summary[:160]))
         if items:
-            return items
-        return [NewsItem("AkShare 新闻接口暂未返回内容", "公司", "中性", "弱", "今晚报告仅使用真实行情数据，新闻/公告需后续接入更稳定来源。")]
+            return _dedupe_news(items)
+        return []
 
 
 class TushareDataProvider:
@@ -174,7 +175,7 @@ class TushareDataProvider:
         return bars
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
-        return [NewsItem("Tushare 新闻源未启用", "公司", "中性", "弱", "当前 Tushare 适配器仅用于日线行情；公告/新闻需后续接入专用源。")]
+        return []
 
 
 class EastmoneyDirectDataProvider:
@@ -221,7 +222,7 @@ class EastmoneyDirectDataProvider:
         return bars
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
-        return [NewsItem("东方财富新闻源未接入", "公司", "中性", "弱", "当前东方财富直连适配器仅用于日线行情。")]
+        return []
 
 
 class MultiSourceDataProvider:
@@ -265,6 +266,37 @@ class MultiSourceDataProvider:
         return [NewsItem("新闻源暂未返回内容", "公司", "中性", "弱", "所有已配置新闻源均未返回有效内容。")]
 
 
+def _classify_news_category(title: str, summary: str, stock: StockConfig) -> str:
+    text = f"{title} {summary}"
+    if any(keyword in text for keyword in ["政策", "发改委", "工信部", "财政部", "央行", "证监会", "国务院", "监管", "补贴", "规划"]):
+        return "政策"
+    if stock.sector in text or any(keyword in text for keyword in ["行业", "产业", "算力", "光通信", "光纤", "通信", "AI", "数据中心"]):
+        return "行业"
+    return "公司"
+
+
+def _classify_sentiment(text: str) -> str:
+    if any(keyword in text for keyword in ["增长", "中标", "突破", "利好", "上调", "合作", "签约", "扩产"]):
+        return "利好"
+    if any(keyword in text for keyword in ["下滑", "处罚", "减持", "亏损", "风险", "问询", "诉讼"]):
+        return "利空"
+    return "中性"
+
+
+def _dedupe_news(items: List[NewsItem], limit: int = 9) -> List[NewsItem]:
+    seen = set()
+    result = []
+    for item in items:
+        key = item.title.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def _strip_exchange(symbol: str) -> str:
     return symbol.split(".")[0]
 
@@ -302,6 +334,8 @@ def _sanitize_provider_error(source: str, exc: Exception) -> str:
         return f"{source} 权限/积分/频率限制，已降级到下一数据源"
     if any(keyword in lowered for keyword in ["permission", "quota", "rate limit", "limit", "forbidden", "unauthorized"]):
         return f"{source} 权限/额度/频率限制，已降级到下一数据源"
+    if any(keyword in lowered for keyword in ["max retries", "connectionpool", "timed out", "timeout", "could not resolve", "connection refused"]):
+        return f"{source} 网络连接失败或超时，已跳过该字段"
     return message[:240]
 
 
