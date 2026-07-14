@@ -23,27 +23,30 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 
 ```bash
 export DATA_PROVIDER=multi
-export MARKET_DATA_CHAIN=eastmoney,sina,akshare
+export MARKET_DATA_CHAIN=hithink,eastmoney,sina,akshare
 export DATA_PROVIDER_TIMEOUT_SECONDS=20
 export PRICE_ADJUST=qfq
+export HITHINK_FINANCE_API_KEY=your_hithink_key_optional
 export ENRICHMENT_PROVIDER=multi
 export ENRICHMENT_CHAIN=tushare,akshare
+export TUSHARE_ENRICHMENT_ENDPOINTS=moneyflow,margin,chip,sector
+export TUSHARE_ENRICHMENT_TIMEOUT_SECONDS=8
 export TUSHARE_TOKEN=your_tushare_token_optional
 python3 -m stock_monitor.run_report --type close_report --dry-run
 ```
 
 Supported V1 sources:
 
+- `hithink`: requires `HITHINK_FINANCE_API_KEY`; uses HiThink-Tech Financial-API historical A-share prices for OHLCV, volume, and amount. Turnover rate is proxied by amount / float market cap when this source wins.
 - `tushare`: requires `TUSHARE_TOKEN`; uses Tushare Pro daily/daily_basic for OHLCV, amount, pct change, and turnover.
 - `eastmoney`: no token; calls Eastmoney historical K-line directly.
+- `sina`: no token; fallback daily K-line source with OHLC and volume.
 - `akshare`: no token; uses AkShare's Eastmoney wrapper and stock news helper.
 - `sample`: deterministic local sample data for tests and offline demos.
 
 `PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
 
-For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. Base OHLCV defaults to Eastmoney, Sina, and AkShare because Tushare forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks.
-
-`DATA_PROVIDER_TIMEOUT_SECONDS` caps each market-data source attempt so a slow public endpoint cannot block scheduled Feishu delivery.
+For GitHub Actions, add `HITHINK_FINANCE_API_KEY` and `TUSHARE_TOKEN` as optional repository secrets. Base OHLCV now tries HiThink Financial-API first, then Eastmoney, Sina, and AkShare. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks because forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts.
 
 ## Enrichment Data
 
@@ -56,6 +59,7 @@ After base OHLCV data is loaded, the Research Agent runs an enrichment layer tha
 - 北向资金：field is reserved; only fill it after a stable per-stock northbound holdings adapter is added.
 
 Each enrichment failure is recorded in the report data-quality section and does not block delivery.
+`TUSHARE_ENRICHMENT_ENDPOINTS` can be narrowed, for example `moneyflow,margin`, when the account does not have access to chip or index endpoints. `TUSHARE_ENRICHMENT_TIMEOUT_SECONDS` keeps optional enrichment from delaying the scheduled Feishu push.
 
 ## Feishu Delivery
 
@@ -86,6 +90,7 @@ Add these repository secrets in `Settings -> Secrets and variables -> Actions`:
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `FEISHU_CHAT_ID`
+- `HITHINK_FINANCE_API_KEY` (optional, recommended for an additional primary quote source)
 - `TUSHARE_TOKEN` (optional, recommended for more stable market data)
 
 The app secret is passed to `lark-cli config init --app-secret-stdin` through stdin at runtime and is not stored in the repository.

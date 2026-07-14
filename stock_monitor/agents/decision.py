@@ -22,8 +22,6 @@ class DecisionAgent:
 
     def run(self, research: ResearchResult) -> DecisionResult:
         stocks = research.stocks
-        if not stocks:
-            return self._data_outage_decision(research)
         stance_score = sum(self._stock_score(stock) for stock in stocks)
         stance = "偏多" if stance_score > 1 else "偏空" if stance_score < -1 else "震荡"
         confidence = min(90, max(45, 60 + abs(stance_score) * 8))
@@ -40,20 +38,6 @@ class DecisionAgent:
             risks=risks,
             catalysts=catalysts,
             actions=actions,
-            sections=sections,
-        )
-
-    def _data_outage_decision(self, research: ResearchResult) -> DecisionResult:
-        sections = self._data_outage_sections(research)
-        return DecisionResult(
-            report_type=research.report_type,
-            report_date=research.report_date,
-            summary=f"{research.report_date.isoformat()} 行情数据异常，未生成正式投资判断。",
-            confidence=0,
-            stance="数据异常",
-            risks=["行情数据不可用，今日不输出量价、资金、技术和策略判断。"],
-            catalysts=[],
-            actions=["请检查 GitHub Actions 数据源日志；行情恢复后系统会自动恢复正式简报。"],
             sections=sections,
         )
 
@@ -121,6 +105,8 @@ class DecisionAgent:
         stocks = research.stocks
         stock_lines = self._stock_lines(stocks)
         news_lines = "\n".join([f"- {item.sentiment}/{item.impact}：{item.title}。{item.summary}" for item in research.news])
+        stock_names = "、".join([stock.name for stock in stocks]) or "当前股票池"
+        missing = self._missing_buckets(research.data_quality)
         key_levels = NO_MARKET_DATA if not stocks else "\n".join(
             [
                 f"- {s.name}：S1 约 {s.close * 0.97:.2f}，S2 约 {s.close * 0.94:.2f}；R1 约 {s.close * 1.03:.2f}，R2 约 {s.close * 1.06:.2f}。"
@@ -139,54 +125,118 @@ class DecisionAgent:
             "funding_preview": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，融资变动率 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
             "key_levels": key_levels,
             "daily_outlook": f"- 当日判断：{stance}，置信度 {confidence} 分。\n" + ("\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA),
-            "morning_volume": "\n".join([f"- {s.name}：开盘量能代理值量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks]) or NO_MARKET_DATA,
-            "fund_flow_check": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks]) or NO_MARKET_DATA,
-            "sector_check": "\n".join([f"- {s.name}：相对板块 {pct(s.sector_excess_return)}，相对大盘 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "morning_volume": self._morning_volume_section(stocks),
+            "fund_flow_check": self._funding_section(stocks, missing, morning=True),
+            "sector_check": self._sector_section(stocks, missing),
             "technical_check": "\n".join([f"- {s.name}：均线 {s.ma_alignment}，布林位置 {s.bollinger_position:.2f}，RSI {s.rsi_percentile:.0f} 分位。" for s in stocks]) or NO_MARKET_DATA,
             "strategy_update": "\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA,
             "price_volume_review": stock_lines,
             "technical_review": "\n".join([f"- {s.name}：{s.ma_alignment}，RSI {s.rsi_percentile:.0f} 分位，MACD 柱强度 {s.macd_bar_strength:.2f}，布林 {s.labels['布林']}。" for s in stocks]) or NO_MARKET_DATA,
-            "funding_review": "\n".join([f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
-            "chip_review": "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks]) or NO_MARKET_DATA,
-            "sector_comparison": "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "funding_review": self._funding_section(stocks, missing, morning=False),
+            "chip_review": self._chip_section(stocks, missing),
+            "sector_comparison": self._sector_section(stocks, missing),
             "trend_rating": "\n".join([f"- {s.name}：{s.labels['趋势评级']}。自适应校准：{research.thresholds[s.symbol].stock_type}。" for s in stocks]) or NO_MARKET_DATA,
             "tomorrow_levels": key_levels,
-            "policy_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "政策"]) or "- 暂无已接入政策数据。",
-            "industry_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category in {"行业", "海外"}]) or "- 暂无已接入行业数据。",
-            "company_intel": "\n".join([f"- {item.title}：{item.summary}" for item in research.news if item.category == "公司"]) or "- 暂无已接入公司公告数据。",
+            "policy_intel": self._news_section(research.news, {"政策"}, f"未发现与 {stock_names} 直接相关的政策新闻；不把无来源政策传闻纳入判断。"),
+            "industry_intel": self._news_section(research.news, {"行业", "海外"}, f"未发现与 {stock_names} 所属板块直接相关的新增行业新闻；行业面先按盘面强弱和后续公告验证。"),
+            "company_intel": self._news_section(research.news, {"公司"}, f"未发现 {stock_names} 的新增公司新闻；后续应优先补充交易所公告/巨潮公告源。"),
             "sentiment_intel": "\n".join([f"- {s.name}：量能 {s.labels['量比']}，RSI {s.labels['RSI']}，趋势 {s.labels['趋势评级']}。" for s in stocks]) or NO_MARKET_DATA,
             "next_day_preview": f"- 次日基准情景：{stance}。\n" + "\n".join([f"- {risk}" for risk in risks]),
             "threshold_profiles": threshold_lines,
-            "data_quality": "\n".join([f"- {item}" for item in research.data_quality]),
+            "data_quality": self._data_quality_summary(research.data_quality),
         }
 
-    def _data_outage_sections(self, research: ResearchResult) -> dict[str, str]:
-        quality = "\n".join([f"- {item}" for item in research.data_quality])
-        message = "- 本次未取得任何关注股票的有效行情数据，系统已停止生成量价判断，避免发送误导性结论。"
-        action = "- 请优先检查 GitHub Actions 当前运行日志中的行情源连接状态；系统已配置降级源，后续运行会自动重试。"
-        return {
-            "market_transmission": message,
-            "news_summary": "- 新闻和公告不会单独触发策略判断；待行情恢复后合并评估。",
-            "funding_preview": message,
-            "key_levels": message,
-            "daily_outlook": action,
-            "morning_volume": message,
-            "fund_flow_check": message,
-            "sector_check": message,
-            "technical_check": message,
-            "strategy_update": action,
-            "price_volume_review": message,
-            "technical_review": message,
-            "funding_review": message,
-            "chip_review": message,
-            "sector_comparison": message,
-            "trend_rating": message,
-            "tomorrow_levels": message,
-            "policy_intel": "- 行情异常时不生成政策驱动判断。",
-            "industry_intel": "- 行情异常时不生成行业驱动判断。",
-            "company_intel": "- 行情异常时不生成公司驱动判断。",
-            "sentiment_intel": message,
-            "next_day_preview": action,
-            "threshold_profiles": "- 阈值配置保留，待行情恢复后继续引用。",
-            "data_quality": quality or "- 行情数据异常，暂无更多说明。",
-        }
+    def _news_section(self, news, categories: set[str], fallback: str) -> str:
+        lines = [f"- {item.title}：{item.summary}" for item in news if item.category in categories]
+        return "\n".join(lines[:4]) if lines else f"- {fallback}"
+
+    def _morning_volume_section(self, stocks: List[StockMetrics]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        lines = ["- V1 尚未接入分钟级开盘量，当前使用最新日线量比/换手率倍数作为早盘确认代理。"]
+        lines.extend([f"- {s.name}：量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks])
+        return "\n".join(lines)
+
+    def _funding_section(self, stocks: List[StockMetrics], missing: set[str], morning: bool) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "主力资金" in missing:
+            return "- 主力资金源暂缺，当前不把资金强度作为核心判断；优先参考量价、均线和风险信号。"
+        if morning:
+            return "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks])
+        lines = [f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]
+        if "融资融券" in missing:
+            lines.append("- 融资融券字段部分暂缺，融资变化仅作弱参考。")
+        return "\n".join(lines)
+
+    def _chip_section(self, stocks: List[StockMetrics], missing: set[str]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "筹码" in missing:
+            return "- 筹码源暂缺，当前不输出获利盘/成本分布判断；先以价格区间和均线位置替代观察。"
+        return "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks])
+
+    def _sector_section(self, stocks: List[StockMetrics], missing: set[str]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "板块基准" in missing:
+            return "- 板块基准源暂缺，当前不输出相对板块胜率判断；仅保留相对大盘代理和个股趋势观察。"
+        return "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks])
+
+    def _missing_buckets(self, notes: List[str]) -> set[str]:
+        return {_quality_bucket(note) for note in notes if any(keyword in note for keyword in ["暂缺", "未返回", "权限", "频率", "超时", "失败"])}
+
+    def _data_quality_summary(self, notes: List[str]) -> str:
+        if not notes:
+            return "- 数据源未返回额外质量说明。"
+        quote_notes = [item for item in notes if "行情使用" in item]
+        quote_missing = [item for item in notes if "行情数据暂缺" in item]
+        missing_notes = [
+            item
+            for item in notes
+            if any(keyword in item for keyword in ["暂缺", "未返回", "权限", "频率", "超时", "失败"])
+            and "行情使用" not in item
+            and "行情数据暂缺" not in item
+        ]
+        lines = []
+        if quote_notes:
+            compact = []
+            for item in quote_notes:
+                compact.append(item.replace("行情使用 ", "使用 ").replace(" 数据源。", ""))
+            lines.append("基础行情：" + "；".join(compact[:4]) + "。")
+        elif quote_missing:
+            lines.append("基础行情：" + "；".join([_short_quality_note(item) for item in quote_missing[:2]]) + "。")
+        else:
+            lines.append("基础行情：未确认真实行情源，需查看运行日志。")
+        if missing_notes:
+            missing_text = "；".join([_quality_bucket(item) for item in missing_notes])
+            lines.append(f"可选增强字段：{_unique_join(missing_text.split('；'))} 受接口权限/返回情况影响，已保留已有行情判断。")
+        else:
+            lines.append("可选增强字段：当前未记录阻塞性缺口。")
+        return "\n".join([f"- {line}" for line in lines[:4]])
+
+
+def _quality_bucket(note: str) -> str:
+    if "主力资金" in note:
+        return "主力资金"
+    if "融资" in note:
+        return "融资融券"
+    if "筹码" in note:
+        return "筹码"
+    if "板块" in note:
+        return "板块基准"
+    if "新闻" in note or "公告" in note:
+        return "新闻公告"
+    return "部分字段"
+
+
+def _unique_join(items: List[str]) -> str:
+    result = []
+    for item in items:
+        if item and item not in result:
+            result.append(item)
+    return "、".join(result[:5]) or "部分字段"
+
+
+def _short_quality_note(note: str) -> str:
+    return note.split("：", 1)[0] if len(note) > 80 else note

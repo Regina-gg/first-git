@@ -1,7 +1,7 @@
 {
   "market_data": {
     "price_adjust_default": "qfq",
-    "priority": ["eastmoney", "sina", "akshare"],
+    "priority": ["hithink", "eastmoney", "sina", "akshare"],
     "usage": "用于价格、成交额、换手率、技术指标和自适应阈值校准"
   },
   "core_evidence": {

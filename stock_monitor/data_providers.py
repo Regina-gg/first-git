@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 import os
 import signal
-import time
+import time as time_module
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Iterator, List, Optional, Protocol
+from zoneinfo import ZoneInfo
 
 from .models import NewsItem, PriceBar, StockConfig
 
@@ -124,10 +125,11 @@ class AkShareDataProvider:
             for row in frame.head(3).to_dict("records"):
                 title = str(_value(row, ["新闻标题", "标题", "title"], f"{stock.name} 新闻"))
                 summary = str(_value(row, ["新闻内容", "内容", "summary"], "新闻摘要暂缺。"))
-                items.append(NewsItem(title=title, category="公司", sentiment="中性", impact="中", summary=summary[:160]))
+                category = _classify_news_category(title, summary, stock)
+                items.append(NewsItem(title=title, category=category, sentiment=_classify_sentiment(title + summary), impact="中", summary=summary[:160]))
         if items:
-            return items
-        return [NewsItem("AkShare 新闻接口暂未返回内容", "公司", "中性", "弱", "今晚报告仅使用真实行情数据，新闻/公告需后续接入更稳定来源。")]
+            return _dedupe_news(items)
+        return []
 
 
 class TushareDataProvider:
@@ -177,7 +179,60 @@ class TushareDataProvider:
         return bars
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
-        return [NewsItem("Tushare 新闻源未启用", "公司", "中性", "弱", "当前 Tushare 适配器仅用于日线行情；公告/新闻需后续接入专用源。")]
+        return []
+
+
+class HiThinkDataProvider:
+    """HiThink Financial-API historical A-share provider."""
+
+    base_url = "https://fuyao.aicubes.cn"
+
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        api_key = api_key or os.getenv("HITHINK_FINANCE_API_KEY")
+        if not api_key:
+            raise RuntimeError("DATA_PROVIDER=hithink requires HITHINK_FINANCE_API_KEY.")
+        try:
+            import requests  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("DATA_PROVIDER=hithink requires installing requests.") from exc
+        self.api_key = api_key
+        self.requests = requests
+        self.quality_notes = [
+            f"行情数据来自同花顺 Financial-API 历史 K 线，复权方式 {_hithink_adjust()}，包含日线 OHLCV 和成交额。",
+            "Financial-API 历史 K 线暂不返回换手率；V1 使用成交额/流通市值作为换手代理。",
+        ]
+
+    def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
+        start_date = end_date - timedelta(days=max(lookback_days * 3, 380))
+        try:
+            response = _requests_get_with_retry(
+                self.requests,
+                f"{self.base_url}/api/a-share/prices/historical",
+                {
+                    "thscode": stock.symbol,
+                    "interval": "1d",
+                    "start": _hithink_timestamp_ms(start_date),
+                    "end": _hithink_timestamp_ms(end_date),
+                    "adjust": _hithink_adjust(),
+                },
+                headers={"X-api-key": self.api_key},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            raise RuntimeError(_sanitize_provider_error("HiThink Financial-API historical", exc)) from exc
+        if payload.get("code") != 0:
+            raise RuntimeError(_sanitize_provider_error("HiThink Financial-API historical", RuntimeError(str(payload.get("message", payload.get("code"))))))
+        rows = payload.get("data", {}).get("item", []) if isinstance(payload, dict) else []
+        if not rows:
+            raise RuntimeError(f"HiThink Financial-API returned no daily bars for {stock.symbol}.")
+        bars = [_bar_from_hithink_row(row, stock) for row in rows[-lookback_days:]]
+        if len(bars) < min(60, lookback_days):
+            raise RuntimeError(f"HiThink Financial-API returned only {len(bars)} bars for {stock.symbol}; at least 60 are required.")
+        return bars
+
+    def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
+        return []
 
 
 class EastmoneyDirectDataProvider:
@@ -224,7 +279,7 @@ class EastmoneyDirectDataProvider:
         return bars
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
-        return [NewsItem("东方财富新闻源未接入", "公司", "中性", "弱", "当前东方财富直连适配器仅用于日线行情。")]
+        return []
 
 
 class SinaDailyDataProvider:
@@ -237,7 +292,7 @@ class SinaDailyDataProvider:
             raise RuntimeError("DATA_PROVIDER=sina requires installing requests.") from exc
         self.requests = requests
         self.quality_notes = [
-            "行情数据兜底来自新浪日线接口，包含 OHLC 和成交量；成交额、换手率按中性值处理。",
+            "行情数据兜底来自新浪日线接口，包含 OHLC 和成交量；成交额为成交量乘收盘价估算，换手率按中性值处理。",
         ]
 
     def get_history(self, stock: StockConfig, end_date: date, lookback_days: int) -> List[PriceBar]:
@@ -259,14 +314,14 @@ class SinaDailyDataProvider:
         return bars
 
     def get_news(self, stocks: List[StockConfig], report_date: date) -> List[NewsItem]:
-        return [NewsItem("新浪新闻源未接入", "公司", "中性", "弱", "当前新浪适配器仅用于日线行情兜底。")]
+        return []
 
 
 class MultiSourceDataProvider:
     """Fallback chain across configured market data providers."""
 
     def __init__(self, chain: Optional[str] = None) -> None:
-        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "eastmoney,sina,akshare")).split(",") if item.strip()]
+        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "hithink,eastmoney,sina,akshare")).split(",") if item.strip()]
         self.providers = []
         self.quality_notes = ["多数据源模式已启用，按配置顺序尝试：" + " -> ".join(names)]
         for name in names:
@@ -304,6 +359,37 @@ class MultiSourceDataProvider:
         return [NewsItem("新闻源暂未返回内容", "公司", "中性", "弱", "所有已配置新闻源均未返回有效内容。")]
 
 
+def _classify_news_category(title: str, summary: str, stock: StockConfig) -> str:
+    text = f"{title} {summary}"
+    if any(keyword in text for keyword in ["政策", "发改委", "工信部", "财政部", "央行", "证监会", "国务院", "监管", "补贴", "规划"]):
+        return "政策"
+    if stock.sector in text or any(keyword in text for keyword in ["行业", "产业", "算力", "光通信", "光纤", "通信", "AI", "数据中心"]):
+        return "行业"
+    return "公司"
+
+
+def _classify_sentiment(text: str) -> str:
+    if any(keyword in text for keyword in ["增长", "中标", "突破", "利好", "上调", "合作", "签约", "扩产"]):
+        return "利好"
+    if any(keyword in text for keyword in ["下滑", "处罚", "减持", "亏损", "风险", "问询", "诉讼"]):
+        return "利空"
+    return "中性"
+
+
+def _dedupe_news(items: List[NewsItem], limit: int = 9) -> List[NewsItem]:
+    seen = set()
+    result = []
+    for item in items:
+        key = item.title.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def _strip_exchange(symbol: str) -> str:
     return symbol.split(".")[0]
 
@@ -339,6 +425,15 @@ def _eastmoney_fqt() -> str:
     return {"none": "0", "qfq": "1", "hfq": "2"}[_price_adjust()]
 
 
+def _hithink_adjust() -> str:
+    return {"none": "none", "qfq": "forward", "hfq": "backward"}[_price_adjust()]
+
+
+def _hithink_timestamp_ms(value: date) -> int:
+    shanghai = ZoneInfo("Asia/Shanghai")
+    return int(datetime.combine(value, time.min, shanghai).timestamp() * 1000)
+
+
 def _request_headers() -> Dict[str, str]:
     return {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36",
@@ -348,15 +443,18 @@ def _request_headers() -> Dict[str, str]:
     }
 
 
-def _requests_get_with_retry(requests_module: Any, url: str, params: Dict[str, str], attempts: int = 3) -> Any:
+def _requests_get_with_retry(requests_module: Any, url: str, params: Dict[str, Any], headers: Optional[Dict[str, str]] = None, attempts: int = 3) -> Any:
+    request_headers = _request_headers()
+    if headers:
+        request_headers.update(headers)
     last_error: Optional[Exception] = None
     for attempt in range(attempts):
         try:
-            return requests_module.get(url, params=params, headers=_request_headers(), timeout=8)
+            return requests_module.get(url, params=params, headers=request_headers, timeout=8)
         except Exception as exc:
             last_error = exc
             if attempt < attempts - 1:
-                time.sleep(0.5 * (attempt + 1))
+                time_module.sleep(0.5 * (attempt + 1))
     raise last_error or RuntimeError("request failed")
 
 
@@ -396,6 +494,8 @@ def _sanitize_provider_error(source: str, exc: Exception) -> str:
         return f"{source} 权限/积分/频率限制，已降级到下一数据源"
     if any(keyword in lowered for keyword in ["permission", "quota", "rate limit", "limit", "forbidden", "unauthorized"]):
         return f"{source} 权限/额度/频率限制，已降级到下一数据源"
+    if any(keyword in lowered for keyword in ["max retries", "connectionpool", "timed out", "timeout", "could not resolve", "connection refused"]):
+        return f"{source} 网络连接失败或超时，已跳过该字段"
     return message[:240]
 
 
@@ -412,6 +512,10 @@ def _float(row: Dict[str, Any], names: List[str], default: float = 0.0) -> float
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_div(numerator: float, denominator: float, default: float = 0.0) -> float:
+    return default if denominator == 0 else numerator / denominator
 
 
 def _date(row: Dict[str, Any]) -> date:
@@ -537,6 +641,31 @@ def _bar_from_eastmoney_kline(kline: str) -> PriceBar:
     )
 
 
+def _bar_from_hithink_row(row: Dict[str, Any], stock: StockConfig) -> PriceBar:
+    close = _float(row, ["close_price"])
+    amount = _float(row, ["turnover"], 0.0)
+    prev_close = _float(row, ["prev_price"], close)
+    pct_change = _safe_div(close - prev_close, prev_close) if "prev_price" in row else 0.0
+    return PriceBar(
+        date=datetime.fromtimestamp(_float(row, ["date_ms"]) / 1000, ZoneInfo("Asia/Shanghai")).date(),
+        open=_float(row, ["open_price"], close),
+        high=_float(row, ["high_price"], close),
+        low=_float(row, ["low_price"], close),
+        close=close,
+        amount=amount,
+        turnover_rate=_safe_div(amount, stock.float_market_cap_cny),
+        main_net_inflow=0.0,
+        northbound_net_inflow=0.0,
+        large_order_ratio=0.0,
+        margin_balance=1.0,
+        profit_ratio=0.5,
+        average_cost=close,
+        chip_width_90=1.0,
+        sector_return=pct_change,
+        market_return=pct_change,
+    )
+
+
 def _single_provider_from_name(name: str):
     if name == "sample":
         return SampleDataProvider()
@@ -546,6 +675,8 @@ def _single_provider_from_name(name: str):
         return TushareDataProvider()
     if name == "eastmoney":
         return EastmoneyDirectDataProvider()
+    if name == "hithink":
+        return HiThinkDataProvider()
     if name == "sina":
         return SinaDailyDataProvider()
     raise ValueError(f"Unsupported provider in V1: {name}")

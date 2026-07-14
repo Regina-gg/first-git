@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import os
+import signal
+import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, TypeVar
 
 from .config import load_config
 from .data_providers import _float, _sanitize_provider_error, _strip_exchange, _trade_date
 from .metrics import safe_div
 from .models import PriceBar, StockConfig
+
+T = TypeVar("T")
 
 
 class EnrichmentProvider(Protocol):
@@ -34,25 +39,30 @@ class TushareEnrichmentProvider:
             raise RuntimeError("Tushare enrichment requires installing tushare.") from exc
         self.pro = ts.pro_api(token)
         self.benchmarks = load_config("config/sector_benchmarks.yaml")
+        endpoints = os.getenv("TUSHARE_ENRICHMENT_ENDPOINTS", "moneyflow,margin,chip,sector")
+        self.endpoints = {item.strip() for item in endpoints.split(",") if item.strip()}
+        self.timeout_seconds = float(os.getenv("TUSHARE_ENRICHMENT_TIMEOUT_SECONDS", "8"))
 
     def enrich_history(self, stock: StockConfig, bars: List[PriceBar], end_date: date) -> Tuple[List[PriceBar], List[str]]:
         notes: List[str] = []
         enriched = list(bars)
         start = (end_date - timedelta(days=max(len(bars) * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
-        enriched, note = self._with_money_flow(stock, enriched, start, end)
-        notes.append(note)
-        enriched, note = self._with_margin(stock, enriched, start, end)
-        notes.append(note)
-        enriched, note = self._with_chip(stock, enriched, start, end)
-        notes.append(note)
-        enriched, note = self._with_sector_benchmark(stock, enriched, start, end)
-        notes.append(note)
+        for endpoint, handler in [
+            ("moneyflow", self._with_money_flow),
+            ("margin", self._with_margin),
+            ("chip", self._with_chip),
+            ("sector", self._with_sector_benchmark),
+        ]:
+            if endpoint not in self.endpoints:
+                continue
+            enriched, note = handler(stock, enriched, start, end)
+            notes.append(note)
         return enriched, notes
 
     def _with_money_flow(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         try:
-            frame = self.pro.moneyflow(ts_code=stock.symbol, start_date=start, end_date=end)
+            frame = self._call("moneyflow", lambda: self.pro.moneyflow(ts_code=stock.symbol, start_date=start, end_date=end))
             if frame is None or len(frame) == 0:
                 return bars, f"{stock.name} 主力资金：Tushare moneyflow 未返回数据。"
             by_date = {str(row["trade_date"]): row for row in frame.to_dict("records")}
@@ -71,11 +81,11 @@ class TushareEnrichmentProvider:
                 updated.append(replace(bar, main_net_inflow=net, large_order_ratio=safe_div(large_total, bar.amount)))
             return updated, f"{stock.name} 主力资金：已接入 Tushare moneyflow。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "主力资金", "Tushare moneyflow", exc)
+            return bars, f"{stock.name} 主力资金暂缺：{_sanitize_provider_error('Tushare moneyflow', exc)}"
 
     def _with_margin(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         try:
-            frame = self.pro.margin_detail(ts_code=stock.symbol, start_date=start, end_date=end)
+            frame = self._call("margin_detail", lambda: self.pro.margin_detail(ts_code=stock.symbol, start_date=start, end_date=end))
             if frame is None or len(frame) == 0:
                 return bars, f"{stock.name} 融资融券：Tushare margin_detail 未返回数据。"
             by_date = {str(row["trade_date"]): row for row in frame.to_dict("records")}
@@ -88,11 +98,11 @@ class TushareEnrichmentProvider:
                 updated.append(replace(bar, margin_balance=_float(row, ["rzye", "rzrqye"], bar.margin_balance) * 10000))
             return updated, f"{stock.name} 融资融券：已接入 Tushare margin_detail。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "融资融券", "Tushare margin_detail", exc)
+            return bars, f"{stock.name} 融资融券暂缺：{_sanitize_provider_error('Tushare margin_detail', exc)}"
 
     def _with_chip(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         try:
-            frame = self.pro.cyq_perf(ts_code=stock.symbol, start_date=start, end_date=end)
+            frame = self._call("cyq_perf", lambda: self.pro.cyq_perf(ts_code=stock.symbol, start_date=start, end_date=end))
             if frame is None or len(frame) == 0:
                 return bars, f"{stock.name} 筹码：Tushare cyq_perf 未返回数据。"
             by_date = {str(row["trade_date"]): row for row in frame.to_dict("records")}
@@ -114,14 +124,14 @@ class TushareEnrichmentProvider:
                 )
             return updated, f"{stock.name} 筹码：已接入 Tushare cyq_perf。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "筹码", "Tushare cyq_perf", exc)
+            return bars, f"{stock.name} 筹码暂缺：{_sanitize_provider_error('Tushare cyq_perf', exc)}"
 
     def _with_sector_benchmark(self, stock: StockConfig, bars: List[PriceBar], start: str, end: str) -> Tuple[List[PriceBar], str]:
         benchmark = self.benchmarks.get("sector_benchmarks", {}).get(stock.sector)
         if not benchmark:
             return bars, f"{stock.name} 板块基准：未配置 {stock.sector} 对应指数。"
         try:
-            frame = self.pro.index_daily(ts_code=benchmark["symbol"], start_date=start, end_date=end)
+            frame = self._call("index_daily", lambda: self.pro.index_daily(ts_code=benchmark["symbol"], start_date=start, end_date=end))
             if frame is None or len(frame) == 0:
                 return bars, f"{stock.name} 板块基准：{benchmark['name']} 未返回指数行情。"
             rows = sorted(frame.to_dict("records"), key=lambda item: item["trade_date"])
@@ -134,7 +144,14 @@ class TushareEnrichmentProvider:
             updated = [replace(bar, sector_return=returns.get(bar.date.strftime("%Y%m%d"), bar.sector_return)) for bar in bars]
             return updated, f"{stock.name} 板块基准：已接入 {benchmark['name']}（{benchmark['symbol']}）。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "板块基准", "Tushare index_daily", exc)
+            return bars, f"{stock.name} 板块基准暂缺：{_sanitize_provider_error('Tushare index_daily', exc)}"
+
+    def _call(self, name: str, callback: Callable[[], T]) -> T:
+        try:
+            with _timeout(self.timeout_seconds):
+                return callback()
+        except TimeoutError as exc:
+            raise RuntimeError(f"Tushare {name} 超过 {self.timeout_seconds:.0f} 秒未返回，已跳过该增强字段") from exc
 
 
 class AkShareEnrichmentProvider:
@@ -173,7 +190,7 @@ class AkShareEnrichmentProvider:
                 )
             return updated, f"{stock.name} 主力资金：已接入 AkShare 个股资金流。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "主力资金", "AkShare fund flow", exc)
+            return bars, f"{stock.name} 主力资金暂缺：{_sanitize_provider_error('AkShare fund flow', exc)}"
 
     def _with_margin(self, stock: StockConfig, bars: List[PriceBar]) -> Tuple[List[PriceBar], str]:
         try:
@@ -188,7 +205,7 @@ class AkShareEnrichmentProvider:
             latest = replace(bars[-1], margin_balance=_float(row, ["融资余额", "融资融券余额"], bars[-1].margin_balance))
             return bars[:-1] + [latest], f"{stock.name} 融资融券：已接入 AkShare 最新交易日融资余额。"
         except Exception as exc:
-            return bars, _enrichment_missing_note(stock.name, "融资融券", "AkShare margin", exc)
+            return bars, f"{stock.name} 融资融券暂缺：{_sanitize_provider_error('AkShare margin', exc)}"
 
 
 class MultiEnrichmentProvider:
@@ -200,7 +217,7 @@ class MultiEnrichmentProvider:
             try:
                 self.providers.append((name, _enrichment_provider_from_name(name)))
             except Exception as exc:
-                self.init_notes.append(_provider_unavailable_note(name, exc))
+                self.init_notes.append(f"{name} 增强数据源未启用：{_sanitize_provider_error(name, exc)}")
 
     def enrich_history(self, stock: StockConfig, bars: List[PriceBar], end_date: date) -> Tuple[List[PriceBar], List[str]]:
         notes = list(self.init_notes)
@@ -210,7 +227,7 @@ class MultiEnrichmentProvider:
                 enriched, provider_notes = provider.enrich_history(stock, enriched, end_date)
                 notes.extend(provider_notes)
             except Exception as exc:
-                notes.append(_enrichment_missing_note(stock.name, f"{name} 增强", name, exc))
+                notes.append(f"{stock.name} {name} 增强失败：{_sanitize_provider_error(name, exc)}")
         return enriched, notes
 
 
@@ -231,15 +248,20 @@ def enrichment_provider_from_env() -> EnrichmentProvider:
     return _enrichment_provider_from_name(provider)
 
 
-def _provider_unavailable_note(name: str, exc: Exception) -> str:
-    if os.getenv("INCLUDE_PROVIDER_ERRORS", "").lower() in {"1", "true", "yes"}:
-        return f"{name} 增强数据源未启用：{_sanitize_provider_error(name, exc)}"
-    if name == "tushare" and not os.getenv("TUSHARE_TOKEN"):
-        return "Tushare 增强数据源未启用：未配置 TUSHARE_TOKEN。"
-    return f"{name} 增强数据源未启用：初始化失败。"
+@contextmanager
+def _timeout(seconds: float):
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread() or not hasattr(signal, "SIGALRM"):
+        yield
+        return
 
+    def raise_timeout(_signum, _frame):
+        raise TimeoutError("provider call timed out")
 
-def _enrichment_missing_note(stock_name: str, field: str, source: str, exc: Exception) -> str:
-    if os.getenv("INCLUDE_PROVIDER_ERRORS", "").lower() in {"1", "true", "yes"}:
-        return f"{stock_name} {field}暂缺：{_sanitize_provider_error(source, exc)}"
-    return f"{stock_name} {field}暂缺：补充数据源暂不可用，核心价格与技术指标不受影响。"
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)

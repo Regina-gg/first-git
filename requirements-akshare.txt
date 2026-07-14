@@ -1,4 +1,5 @@
 akshare
 pandas
+PyYAML
 requests
 tushare

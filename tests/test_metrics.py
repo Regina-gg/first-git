@@ -4,11 +4,12 @@ import unittest
 from stock_monitor.data_providers import SampleDataProvider
 from stock_monitor.data_providers import _bar_from_akshare_row
 from stock_monitor.data_providers import _bar_from_eastmoney_kline
+from stock_monitor.data_providers import _bar_from_hithink_row
 from stock_monitor.data_providers import _bar_from_sina_row
 from stock_monitor.data_providers import _bar_from_tushare_row
 from stock_monitor.data_providers import _eastmoney_fqt
+from stock_monitor.data_providers import _hithink_adjust
 from stock_monitor.data_providers import _price_adjust
-from stock_monitor.data_providers import _provider_timeout_seconds
 from stock_monitor.metrics import compute_metrics, percentile_rank
 from stock_monitor.models import StockConfig
 from stock_monitor.thresholds import calibrate_stock
@@ -81,20 +82,42 @@ class MetricsTest(unittest.TestCase):
         self.assertAlmostEqual(bar.turnover_rate, 0.025)
         self.assertAlmostEqual(bar.market_return, 0.012)
 
+    def test_hithink_row_mapping(self):
+        stock = StockConfig("603019.SH", "中科曙光", "算力", 1_000_000, ["volume"])
+        bar = _bar_from_hithink_row(
+            {
+                "date_ms": 1782748800000,
+                "open_price": 10,
+                "high_price": 11,
+                "low_price": 9,
+                "close_price": 10.5,
+                "volume": 1000,
+                "turnover": 123456,
+                "prev_price": 10,
+            },
+            stock,
+        )
+        self.assertEqual(bar.date.isoformat(), "2026-06-30")
+        self.assertEqual(bar.close, 10.5)
+        self.assertEqual(bar.amount, 123456)
+        self.assertAlmostEqual(bar.turnover_rate, 0.123456)
+        self.assertAlmostEqual(bar.market_return, 0.05)
+
     def test_sina_row_mapping(self):
         bar = _bar_from_sina_row({"day": "2026-06-30", "open": "10", "high": "11", "low": "9", "close": "10.5", "volume": "1000"})
         self.assertEqual(bar.date.isoformat(), "2026-06-30")
         self.assertEqual(bar.close, 10.5)
         self.assertEqual(bar.amount, 1_050_000)
+        self.assertEqual(bar.turnover_rate, 0.0)
 
     def test_default_price_adjustment_is_forward_adjusted(self):
         self.assertEqual(_price_adjust(), "qfq")
         self.assertEqual(_eastmoney_fqt(), "1")
+        self.assertEqual(_hithink_adjust(), "forward")
 
     def test_default_market_chain_avoids_tushare_adjust_rate_limit_first(self):
         with open(".github/workflows/daily_reports.yml", encoding="utf-8") as file:
             workflow = file.read()
-        self.assertIn("MARKET_DATA_CHAIN: eastmoney,sina,akshare", workflow)
-        self.assertIn('DATA_PROVIDER_TIMEOUT_SECONDS: "20"', workflow)
+        self.assertIn("MARKET_DATA_CHAIN: hithink,eastmoney,sina,akshare", workflow)
+        self.assertIn("HITHINK_FINANCE_API_KEY:", workflow)
         self.assertNotIn("MARKET_DATA_CHAIN: tushare", workflow)
-        self.assertEqual(_provider_timeout_seconds(), 20)

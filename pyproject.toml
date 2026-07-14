@@ -6,6 +6,6 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
-market-data = ["akshare", "pandas", "requests", "tushare"]
-akshare = ["akshare", "pandas"]
+market-data = ["akshare", "pandas", "PyYAML", "requests", "tushare"]
+akshare = ["akshare", "pandas", "PyYAML"]
 dev = []
