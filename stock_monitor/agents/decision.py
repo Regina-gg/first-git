@@ -106,6 +106,7 @@ class DecisionAgent:
         stock_lines = self._stock_lines(stocks)
         news_lines = "\n".join([f"- {item.sentiment}/{item.impact}：{item.title}。{item.summary}" for item in research.news])
         stock_names = "、".join([stock.name for stock in stocks]) or "当前股票池"
+        missing = self._missing_buckets(research.data_quality)
         key_levels = NO_MARKET_DATA if not stocks else "\n".join(
             [
                 f"- {s.name}：S1 约 {s.close * 0.97:.2f}，S2 约 {s.close * 0.94:.2f}；R1 约 {s.close * 1.03:.2f}，R2 约 {s.close * 1.06:.2f}。"
@@ -124,16 +125,16 @@ class DecisionAgent:
             "funding_preview": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，融资变动率 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
             "key_levels": key_levels,
             "daily_outlook": f"- 当日判断：{stance}，置信度 {confidence} 分。\n" + ("\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA),
-            "morning_volume": "\n".join([f"- {s.name}：开盘量能代理值量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks]) or NO_MARKET_DATA,
-            "fund_flow_check": "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks]) or NO_MARKET_DATA,
-            "sector_check": "\n".join([f"- {s.name}：相对板块 {pct(s.sector_excess_return)}，相对大盘 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "morning_volume": self._morning_volume_section(stocks),
+            "fund_flow_check": self._funding_section(stocks, missing, morning=True),
+            "sector_check": self._sector_section(stocks, missing),
             "technical_check": "\n".join([f"- {s.name}：均线 {s.ma_alignment}，布林位置 {s.bollinger_position:.2f}，RSI {s.rsi_percentile:.0f} 分位。" for s in stocks]) or NO_MARKET_DATA,
             "strategy_update": "\n".join([f"- {item}" for item in actions]) or NO_MARKET_DATA,
             "price_volume_review": stock_lines,
             "technical_review": "\n".join([f"- {s.name}：{s.ma_alignment}，RSI {s.rsi_percentile:.0f} 分位，MACD 柱强度 {s.macd_bar_strength:.2f}，布林 {s.labels['布林']}。" for s in stocks]) or NO_MARKET_DATA,
-            "funding_review": "\n".join([f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]) or NO_MARKET_DATA,
-            "chip_review": "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks]) or NO_MARKET_DATA,
-            "sector_comparison": "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks]) or NO_MARKET_DATA,
+            "funding_review": self._funding_section(stocks, missing, morning=False),
+            "chip_review": self._chip_section(stocks, missing),
+            "sector_comparison": self._sector_section(stocks, missing),
             "trend_rating": "\n".join([f"- {s.name}：{s.labels['趋势评级']}。自适应校准：{research.thresholds[s.symbol].stock_type}。" for s in stocks]) or NO_MARKET_DATA,
             "tomorrow_levels": key_levels,
             "policy_intel": self._news_section(research.news, {"政策"}, f"未发现与 {stock_names} 直接相关的政策新闻；不把无来源政策传闻纳入判断。"),
@@ -148,6 +149,42 @@ class DecisionAgent:
     def _news_section(self, news, categories: set[str], fallback: str) -> str:
         lines = [f"- {item.title}：{item.summary}" for item in news if item.category in categories]
         return "\n".join(lines[:4]) if lines else f"- {fallback}"
+
+    def _morning_volume_section(self, stocks: List[StockMetrics]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        lines = ["- V1 尚未接入分钟级开盘量，当前使用最新日线量比/换手率倍数作为早盘确认代理。"]
+        lines.extend([f"- {s.name}：量比 {ratio(s.amount_ratio)}，换手率倍数 {ratio(s.turnover_ratio)}。" for s in stocks])
+        return "\n".join(lines)
+
+    def _funding_section(self, stocks: List[StockMetrics], missing: set[str], morning: bool) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "主力资金" in missing:
+            return "- 主力资金源暂缺，当前不把资金强度作为核心判断；优先参考量价、均线和风险信号。"
+        if morning:
+            return "\n".join([f"- {s.name}：主力资金强度 {pct(s.main_fund_strength)}，大单占比偏离 {pct(s.large_order_deviation)}。" for s in stocks])
+        lines = [f"- {s.name}：主力 {pct(s.main_fund_strength)}，北向偏离 {s.northbound_deviation:.2f}，融资 {pct(s.margin_change_rate)}。" for s in stocks]
+        if "融资融券" in missing:
+            lines.append("- 融资融券字段部分暂缺，融资变化仅作弱参考。")
+        return "\n".join(lines)
+
+    def _chip_section(self, stocks: List[StockMetrics], missing: set[str]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "筹码" in missing:
+            return "- 筹码源暂缺，当前不输出获利盘/成本分布判断；先以价格区间和均线位置替代观察。"
+        return "\n".join([f"- {s.name}：获利盘 5 日变化 {pct(s.profit_ratio_change_5d)}，成本偏离 {pct(s.cost_deviation)}，筹码集中度 {s.chip_concentration_ratio:.2f}。" for s in stocks])
+
+    def _sector_section(self, stocks: List[StockMetrics], missing: set[str]) -> str:
+        if not stocks:
+            return NO_MARKET_DATA
+        if "板块基准" in missing:
+            return "- 板块基准源暂缺，当前不输出相对板块胜率判断；仅保留相对大盘代理和个股趋势观察。"
+        return "\n".join([f"- {s.name}：较板块 {pct(s.sector_excess_return)}，较沪深 300 代理 {pct(s.market_excess_return)}。" for s in stocks])
+
+    def _missing_buckets(self, notes: List[str]) -> set[str]:
+        return {_quality_bucket(note) for note in notes if any(keyword in note for keyword in ["暂缺", "未返回", "权限", "频率", "超时", "失败"])}
 
     def _data_quality_summary(self, notes: List[str]) -> str:
         if not notes:
