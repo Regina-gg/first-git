@@ -73,8 +73,9 @@ jobs:
       - name: Calibrate thresholds
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: eastmoney,akshare
+          MARKET_DATA_CHAIN: hithink,eastmoney,akshare
           PRICE_ADJUST: qfq
+          HITHINK_FINANCE_API_KEY: ${{ secrets.HITHINK_FINANCE_API_KEY }}
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
           TUSHARE_ENRICHMENT_TIMEOUT_SECONDS: "8"
@@ -83,8 +84,9 @@ jobs:
       - name: Run report
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: eastmoney,akshare
+          MARKET_DATA_CHAIN: hithink,eastmoney,akshare
           PRICE_ADJUST: qfq
+          HITHINK_FINANCE_API_KEY: ${{ secrets.HITHINK_FINANCE_API_KEY }}
           ENRICHMENT_PROVIDER: multi
           ENRICHMENT_CHAIN: tushare,akshare
           TUSHARE_ENRICHMENT_TIMEOUT_SECONDS: "8"
