@@ -5,6 +5,7 @@ from stock_monitor.data_providers import SampleDataProvider
 from stock_monitor.data_providers import _bar_from_akshare_row
 from stock_monitor.data_providers import _bar_from_eastmoney_kline
 from stock_monitor.data_providers import _bar_from_hithink_row
+from stock_monitor.data_providers import _bar_from_sina_row
 from stock_monitor.data_providers import _bar_from_tushare_row
 from stock_monitor.data_providers import _eastmoney_fqt
 from stock_monitor.data_providers import _hithink_adjust
@@ -102,6 +103,13 @@ class MetricsTest(unittest.TestCase):
         self.assertAlmostEqual(bar.turnover_rate, 0.123456)
         self.assertAlmostEqual(bar.market_return, 0.05)
 
+    def test_sina_row_mapping(self):
+        bar = _bar_from_sina_row({"day": "2026-06-30", "open": "10", "high": "11", "low": "9", "close": "10.5", "volume": "1000"})
+        self.assertEqual(bar.date.isoformat(), "2026-06-30")
+        self.assertEqual(bar.close, 10.5)
+        self.assertEqual(bar.amount, 1_050_000)
+        self.assertEqual(bar.turnover_rate, 0.0)
+
     def test_default_price_adjustment_is_forward_adjusted(self):
         self.assertEqual(_price_adjust(), "qfq")
         self.assertEqual(_eastmoney_fqt(), "1")
@@ -110,6 +118,6 @@ class MetricsTest(unittest.TestCase):
     def test_default_market_chain_avoids_tushare_adjust_rate_limit_first(self):
         with open(".github/workflows/daily_reports.yml", encoding="utf-8") as file:
             workflow = file.read()
-        self.assertIn("MARKET_DATA_CHAIN: hithink,eastmoney,akshare", workflow)
+        self.assertIn("MARKET_DATA_CHAIN: hithink,eastmoney,sina,akshare", workflow)
         self.assertIn("HITHINK_FINANCE_API_KEY:", workflow)
         self.assertNotIn("MARKET_DATA_CHAIN: tushare", workflow)

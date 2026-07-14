@@ -50,7 +50,8 @@ class WorkflowTest(unittest.TestCase):
         )
         message = WriterAgent().render(DecisionAgent().run(research), None)
         self.assertIn("行情数据暂缺", message.markdown)
-        self.assertIn("upstream disconnected", message.markdown)
+        self.assertIn("连接失败或返回空数据", message.markdown)
+        self.assertNotIn("upstream disconnected", message.markdown)
 
     def test_evening_report_has_non_empty_intel_fallbacks_and_short_quality(self):
         stock = StockConfig("603019.SH", "中科曙光", "算力", 100_000_000_000, ["amount"])

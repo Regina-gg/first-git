@@ -23,7 +23,8 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 
 ```bash
 export DATA_PROVIDER=multi
-export MARKET_DATA_CHAIN=hithink,eastmoney,akshare
+export MARKET_DATA_CHAIN=hithink,eastmoney,sina,akshare
+export DATA_PROVIDER_TIMEOUT_SECONDS=20
 export PRICE_ADJUST=qfq
 export HITHINK_FINANCE_API_KEY=your_hithink_key_optional
 export ENRICHMENT_PROVIDER=multi
@@ -39,12 +40,13 @@ Supported V1 sources:
 - `hithink`: requires `HITHINK_FINANCE_API_KEY`; uses HiThink-Tech Financial-API historical A-share prices for OHLCV, volume, and amount. Turnover rate is proxied by amount / float market cap when this source wins.
 - `tushare`: requires `TUSHARE_TOKEN`; uses Tushare Pro daily/daily_basic for OHLCV, amount, pct change, and turnover.
 - `eastmoney`: no token; calls Eastmoney historical K-line directly.
+- `sina`: no token; fallback daily K-line source with OHLC and volume.
 - `akshare`: no token; uses AkShare's Eastmoney wrapper and stock news helper.
 - `sample`: deterministic local sample data for tests and offline demos.
 
 `PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
 
-For GitHub Actions, add `HITHINK_FINANCE_API_KEY` and `TUSHARE_TOKEN` as optional repository secrets. Base OHLCV now tries HiThink Financial-API first, then Eastmoney and AkShare. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks because forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts.
+For GitHub Actions, add `HITHINK_FINANCE_API_KEY` and `TUSHARE_TOKEN` as optional repository secrets. Base OHLCV now tries HiThink Financial-API first, then Eastmoney, Sina, and AkShare. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks because forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts.
 
 ## Enrichment Data
 
