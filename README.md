@@ -23,7 +23,12 @@ V1 can run with sample data locally, but production pushes should use `DATA_PROV
 
 ```bash
 export DATA_PROVIDER=multi
-export MARKET_DATA_CHAIN=tushare,eastmoney,akshare
+export MARKET_DATA_CHAIN=eastmoney,akshare
+export PRICE_ADJUST=qfq
+export ENRICHMENT_PROVIDER=multi
+export ENRICHMENT_CHAIN=tushare,akshare
+export TUSHARE_ENRICHMENT_ENDPOINTS=moneyflow,margin,chip,sector
+export TUSHARE_ENRICHMENT_TIMEOUT_SECONDS=8
 export TUSHARE_TOKEN=your_tushare_token_optional
 python3 -m stock_monitor.run_report --type close_report --dry-run
 ```
@@ -35,7 +40,22 @@ Supported V1 sources:
 - `akshare`: no token; uses AkShare's Eastmoney wrapper and stock news helper.
 - `sample`: deterministic local sample data for tests and offline demos.
 
-For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. If it is missing or quota-limited, the workflow automatically falls back to Eastmoney and then AkShare.
+`PRICE_ADJUST` controls the price series used by technical indicators. Default is `qfq` (前复权), matching the A-share research-report convention for moving averages, MACD, RSI, and support/resistance. Supported values are `qfq`, `hfq`, and `none`.
+
+For GitHub Actions, add `TUSHARE_TOKEN` as an optional repository secret. Base OHLCV defaults to Eastmoney and AkShare because Tushare forward-adjusted `pro_bar` can hit `adj_factor` rate limits on lower-quota accounts. Tushare remains enabled for enrichment fields such as money flow, margin, chip, and benchmarks.
+
+## Enrichment Data
+
+After base OHLCV data is loaded, the Research Agent runs an enrichment layer that fills the PRD's richer fields when the source is available:
+
+- 主力资金：Tushare `moneyflow`, with AkShare individual fund flow fallback.
+- 融资融券：Tushare `margin_detail`, with best-effort AkShare latest margin fallback.
+- 筹码：Tushare `cyq_perf` when the account has access.
+- 板块基准：Tushare `index_daily` based on `config/sector_benchmarks.yaml`.
+- 北向资金：field is reserved; only fill it after a stable per-stock northbound holdings adapter is added.
+
+Each enrichment failure is recorded in the report data-quality section and does not block delivery.
+`TUSHARE_ENRICHMENT_ENDPOINTS` can be narrowed, for example `moneyflow,margin`, when the account does not have access to chip or index endpoints. `TUSHARE_ENRICHMENT_TIMEOUT_SECONDS` keeps optional enrichment from delaying the scheduled Feishu push.
 
 ## Feishu Delivery
 

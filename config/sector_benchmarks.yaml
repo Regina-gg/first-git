@@ -1,0 +1,13 @@
+{
+  "default_market_index": "000300.SH",
+  "sector_benchmarks": {
+    "算力": {
+      "symbol": "000688.SH",
+      "name": "科创50"
+    },
+    "通信光纤": {
+      "symbol": "000991.SH",
+      "name": "全指信息"
+    }
+  }
+}

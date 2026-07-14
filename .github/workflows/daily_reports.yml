@@ -73,13 +73,21 @@ jobs:
       - name: Calibrate thresholds
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: tushare,eastmoney,akshare
+          MARKET_DATA_CHAIN: eastmoney,akshare
+          PRICE_ADJUST: qfq
+          ENRICHMENT_PROVIDER: multi
+          ENRICHMENT_CHAIN: tushare,akshare
+          TUSHARE_ENRICHMENT_TIMEOUT_SECONDS: "8"
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python -m stock_monitor.calibrate_thresholds
       - name: Run report
         env:
           DATA_PROVIDER: multi
-          MARKET_DATA_CHAIN: tushare,eastmoney,akshare
+          MARKET_DATA_CHAIN: eastmoney,akshare
+          PRICE_ADJUST: qfq
+          ENRICHMENT_PROVIDER: multi
+          ENRICHMENT_CHAIN: tushare,akshare
+          TUSHARE_ENRICHMENT_TIMEOUT_SECONDS: "8"
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           FEISHU_DELIVERY_PROVIDER: lark_cli
           FEISHU_SEND_AS: bot

@@ -4,6 +4,7 @@ from datetime import date
 from typing import List
 
 from ..data_providers import MarketDataProvider, NewsDataProvider
+from ..enrichment_providers import enrichment_provider_from_env
 from ..metrics import compute_metrics
 from ..models import ReportType, ResearchResult, StockConfig, ThresholdProfile
 from ..thresholds import calibrate_watchlist
@@ -33,9 +34,12 @@ class ResearchAgent:
             )
         )
         metrics = []
+        enrichment_provider = enrichment_provider_from_env()
         for stock in stocks:
             try:
                 bars = self.market_provider.get_history(stock, report_date, 260)
+                bars, enrichment_notes = enrichment_provider.enrich_history(stock, bars, report_date)
+                data_quality.extend(enrichment_notes)
                 metrics.append(compute_metrics(stock, bars, thresholds[stock.symbol]))
             except Exception as exc:
                 data_quality.append(f"{stock.name}（{stock.symbol}）行情数据暂缺：{exc}")

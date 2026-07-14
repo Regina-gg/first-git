@@ -87,7 +87,7 @@ class AkShareDataProvider:
             raise RuntimeError("DATA_PROVIDER=akshare requires installing akshare.") from exc
         self.ak = ak
         self.quality_notes = [
-            "行情数据来自 AkShare/Eastmoney 接口，包含日线 OHLCV、成交额、涨跌幅、振幅、换手率。",
+            f"行情数据来自 AkShare/Eastmoney 接口，复权方式 {_price_adjust()}，包含日线 OHLCV、成交额、涨跌幅、振幅、换手率。",
             "V1 AkShare 适配器暂未接入逐股主力资金、北向、融资、筹码和板块基准；相关字段按中性值处理。",
         ]
 
@@ -95,10 +95,11 @@ class AkShareDataProvider:
         symbol = _strip_exchange(stock.symbol)
         start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
+        adjust = _akshare_adjust()
         try:
-            frame = self.ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end, adjust="")
+            frame = self.ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end, adjust=adjust)
         except TypeError:
-            frame = self.ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end, adjust="")
+            frame = self.ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end, adjust=adjust)
         if frame is None or len(frame) == 0:
             raise RuntimeError(f"AkShare returned no daily bars for {stock.symbol}.")
         rows = frame.tail(lookback_days).to_dict("records")
@@ -141,9 +142,10 @@ class TushareDataProvider:
             import tushare as ts  # type: ignore
         except ImportError as exc:
             raise RuntimeError("DATA_PROVIDER=tushare requires installing tushare.") from exc
+        self.ts = ts
         self.pro = ts.pro_api(token)
         self.quality_notes = [
-            "行情数据优先来自 Tushare Pro daily/daily_basic，包含日线 OHLC、成交量、成交额和换手率。",
+            f"行情数据优先来自 Tushare Pro，复权方式 {_price_adjust()}，包含日线 OHLC、成交量、成交额和换手率。",
             "V1 Tushare 适配器暂未接入逐股主力资金、北向、融资和筹码；相关字段按中性值处理。",
         ]
 
@@ -151,7 +153,9 @@ class TushareDataProvider:
         start_date = (end_date - timedelta(days=max(lookback_days * 3, 380))).strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
         try:
-            frame = self.pro.daily(ts_code=stock.symbol, start_date=start_date, end_date=end)
+            frame = self.ts.pro_bar(ts_code=stock.symbol, start_date=start_date, end_date=end, adj=_tushare_adjust(), adjfactor=False)
+            if frame is None or len(frame) == 0:
+                frame = self.pro.daily(ts_code=stock.symbol, start_date=start_date, end_date=end)
         except Exception as exc:
             raise RuntimeError(_sanitize_provider_error("Tushare daily", exc)) from exc
         if frame is None or len(frame) == 0:
@@ -183,7 +187,7 @@ class EastmoneyDirectDataProvider:
             raise RuntimeError("DATA_PROVIDER=eastmoney requires installing requests.") from exc
         self.requests = requests
         self.quality_notes = [
-            "行情数据来自东方财富历史 K 线接口直连，包含日线 OHLCV、成交额、涨跌幅、振幅和换手率。",
+            f"行情数据来自东方财富历史 K 线接口直连，复权方式 {_price_adjust()}，包含日线 OHLCV、成交额、涨跌幅、振幅和换手率。",
             "V1 东方财富直连适配器暂未接入逐股主力资金、北向、融资和筹码；相关字段按中性值处理。",
         ]
 
@@ -198,7 +202,7 @@ class EastmoneyDirectDataProvider:
                     "fields1": "f1,f2,f3,f4,f5,f6",
                     "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                     "klt": "101",
-                    "fqt": "0",
+                    "fqt": _eastmoney_fqt(),
                     "beg": start_date,
                     "end": end,
                 },
@@ -224,7 +228,7 @@ class MultiSourceDataProvider:
     """Fallback chain across configured market data providers."""
 
     def __init__(self, chain: Optional[str] = None) -> None:
-        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "tushare,eastmoney,akshare")).split(",") if item.strip()]
+        names = [item.strip() for item in (chain or os.getenv("MARKET_DATA_CHAIN", "eastmoney,akshare")).split(",") if item.strip()]
         self.providers = []
         self.quality_notes = ["多数据源模式已启用，按配置顺序尝试：" + " -> ".join(names)]
         for name in names:
@@ -270,6 +274,25 @@ def _eastmoney_secid(symbol: str) -> str:
     if symbol.endswith(".SH") or code.startswith("6"):
         return f"1.{code}"
     return f"0.{code}"
+
+
+def _price_adjust() -> str:
+    value = os.getenv("PRICE_ADJUST", "qfq").strip().lower()
+    return value if value in {"qfq", "hfq", "none"} else "qfq"
+
+
+def _akshare_adjust() -> str:
+    adjust = _price_adjust()
+    return "" if adjust == "none" else adjust
+
+
+def _tushare_adjust() -> Optional[str]:
+    adjust = _price_adjust()
+    return None if adjust == "none" else adjust
+
+
+def _eastmoney_fqt() -> str:
+    return {"none": "0", "qfq": "1", "hfq": "2"}[_price_adjust()]
 
 
 def _sanitize_provider_error(source: str, exc: Exception) -> str:
